@@ -1,0 +1,3 @@
+-r requirements-base.txt
+torch>=2.4,<3
+# Install TensorRT from the matching NVIDIA CUDA/JetPack distribution.
