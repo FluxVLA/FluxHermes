@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 _base = Path(__file__).with_name('pi05_aloha_fp16.py')
 namespace = {}
 exec(compile(_base.read_text(encoding='utf-8'), str(_base), 'exec'), namespace)
