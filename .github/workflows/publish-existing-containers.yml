@@ -1,0 +1,40 @@
+name: Publish existing containers
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-existing-containers.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: github.actor == 'ZaneZhang-67'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: fluxhermes-thor
+            tag: r39.2-trt10.13
+          - name: fluxhermes-orin
+            tag: r36.4.4-trt10.3
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+
+      - name: Copy ${{ matrix.image.name }}
+        env:
+          SOURCE_PACKAGES_TOKEN: ${{ secrets.PACKAGE_SOURCE_TOKEN }}
+          DESTINATION_PACKAGES_TOKEN: ${{ github.token }}
+        run: |
+          skopeo copy --all \
+            --src-creds "ZaneZhang-67:${SOURCE_PACKAGES_TOKEN}" \
+            --dest-creds "${GITHUB_ACTOR}:${DESTINATION_PACKAGES_TOKEN}" \
+            "docker://ghcr.io/zanezhang-67/${{ matrix.image.name }}:${{ matrix.image.tag }}" \
+            "docker://ghcr.io/fluxvla/${{ matrix.image.name }}:${{ matrix.image.tag }}"
