@@ -1,9 +1,7 @@
 # FluxHermes
 
-FluxHermes 以古希腊神话中的信使之神 Hermes 命名，是 Flux 系列中专门负责
-部署的代码库，职责包括：将 FluxVLA
-模型导出为 ONNX/TensorRT、进行推理加速和量化、验证源模型与部署引擎的
-数值一致性，并生成可在真实机器人上加载的完整部署包。
+FluxHermes 是 FluxVLA 的模型部署工具，用于将模型编译为 ONNX 和 TensorRT，
+支持部署优化、训练后量化、源模型与引擎的一致性验证，以及机器人部署包生成。
 
 > **当前状态：** 初始框架已经覆盖通用 FluxVLA 适配、TensorRT
 > FP32/FP16 构建、INT8 Q/DQ 量化、TensorRT 10/11 运行时、部署包

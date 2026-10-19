@@ -1,10 +1,9 @@
 # FluxHermes
 
-FluxHermes is the deployment codebase in the Flux ecosystem. Named after the
-ancient Greek messenger god, it compiles
-FluxVLA policies to ONNX and TensorRT, applies deployment-time optimization and
-post-training quantization, validates source-versus-engine parity, and packages
-the result as an integrity-checked bundle for robot execution.
+FluxHermes is the deployment codebase for FluxVLA policies. It compiles models
+to ONNX and TensorRT, supports deployment optimization and post-training
+quantization, validates source-versus-engine parity, and packages the required
+artifacts for robot execution.
 
 [中文说明](README_zh-CN.md)
 
