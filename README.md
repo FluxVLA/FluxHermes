@@ -31,13 +31,6 @@ normalization, and action semantics. FluxHermes owns graph compilation,
 optimization, quantization, engine validation, and the deployment runtime.
 FluxThemis remains the owner of rollout and evaluation orchestration.
 
-## Why the name
-
-Hermes carries messages safely between worlds. `FluxHermes` plays the same role
-for models: it transports a FluxVLA policy from the training codebase to a
-specific inference backend and robot device while preserving its interface and
-semantics.
-
 ## MMDeploy-inspired architecture
 
 FluxHermes adopts MMDeploy's most useful separation of concerns without taking

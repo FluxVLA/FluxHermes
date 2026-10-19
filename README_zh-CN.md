@@ -20,12 +20,6 @@ FluxHermes 以古希腊神话中的信使之神 Hermes 命名，是 Flux 系列�
 FluxHermes 不复制 FluxVLA 的模型语义。预处理器、tokenizer、统计量和机器人
 embodiment 资产会作为部署包的一部分被显式打包。
 
-## 为什么叫 FluxHermes
-
-Hermes 负责在不同世界之间传递信息。FluxHermes 对模型承担类似职责：把
-FluxVLA 中训练好的策略传递到具体推理后端和机器人设备，同时保证输入输出
-契约、预处理和动作语义不发生漂移。
-
 ## 参考 MMDeploy 的架构调整
 
 FluxHermes 借鉴 MMDeploy 的职责分层，但不依赖 MMDeploy 本身：
