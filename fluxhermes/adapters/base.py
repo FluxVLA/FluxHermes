@@ -32,6 +32,100 @@ class PreparedModel:
                 f'{len(self.output_names)} output names.')
         return dict(zip(self.output_names, result))
 
+    def as_graph(
+        self,
+        name: str = 'model',
+        build_options: Optional[Mapping[str, Any]] = None,
+    ) -> 'PreparedGraph':
+        """Wrap the legacy single-model contract as one named export graph."""
+        return PreparedGraph(
+            module=self.module,
+            inputs=self.inputs,
+            output_names=self.output_names,
+            dynamic_axes=self.dynamic_axes,
+            calibration_source=self.calibration_source,
+            metadata=dict(self.metadata),
+            name=name,
+            build_options=dict(build_options or {}),
+        )
+
+
+@dataclass
+class PreparedGraph(PreparedModel):
+    """One named graph in a potentially partitioned deployment."""
+
+    name: str = 'model'
+    build_options: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError('PreparedGraph.name cannot be empty.')
+
+
+@dataclass
+class PreparedDeployment:
+    """Named export graphs plus an end-to-end source-model reference."""
+
+    family: str
+    graphs: Mapping[str, PreparedGraph]
+    reference_runner: Callable[[], Mapping[str, Any]]
+    output_names: Tuple[str, ...]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.family:
+            raise ValueError('PreparedDeployment.family cannot be empty.')
+        if not self.output_names:
+            raise ValueError('PreparedDeployment.output_names cannot be empty.')
+        if len(self.output_names) != len(set(self.output_names)):
+            raise ValueError('PreparedDeployment.output_names must be unique.')
+
+        graphs = dict(self.graphs)
+        if not graphs:
+            raise ValueError('PreparedDeployment requires at least one graph.')
+        for name, graph in graphs.items():
+            if not name:
+                raise ValueError('PreparedDeployment graph names cannot be empty.')
+            if not isinstance(graph, PreparedGraph):
+                raise TypeError(
+                    f'PreparedDeployment graph {name!r} must be PreparedGraph.')
+            if name != graph.name:
+                raise ValueError(
+                    f'Graph mapping key {name!r} does not match '
+                    f'PreparedGraph.name {graph.name!r}.')
+        self.graphs = graphs
+
+    @classmethod
+    def from_model(
+        cls,
+        prepared: PreparedModel,
+        family: str = 'generic',
+        graph_name: str = 'model',
+        build_options: Optional[Mapping[str, Any]] = None,
+    ) -> 'PreparedDeployment':
+        """Promote a legacy single graph without changing existing adapters."""
+        graph = prepared.as_graph(graph_name, build_options=build_options)
+        return cls(
+            family=family,
+            graphs={graph_name: graph},
+            reference_runner=prepared.run_reference,
+            output_names=prepared.output_names,
+            metadata=dict(prepared.metadata),
+        )
+
+    def run_reference(self) -> Dict[str, Any]:
+        result = self.reference_runner()
+        if not isinstance(result, Mapping):
+            raise TypeError(
+                'PreparedDeployment reference runner must return a mapping.')
+        missing = [name for name in self.output_names if name not in result]
+        unknown = [name for name in result if name not in self.output_names]
+        if missing or unknown:
+            raise ValueError(
+                'PreparedDeployment reference outputs do not match output_names: '
+                f'missing={missing}, unknown={unknown}.')
+        return {name: result[name] for name in self.output_names}
+
 
 class ModelAdapter(ABC):
     """Boundary between FluxHermes and a source model repository."""
