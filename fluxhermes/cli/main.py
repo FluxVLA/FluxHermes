@@ -13,6 +13,7 @@ from ..bundle import describe_bundle, verify_bundle
 from ..config import load_config
 from ..errors import FluxHermesError
 from ..pipeline import CompilePipeline
+from ..post_training import convert_after_training
 from ..utils import environment_report
 
 
@@ -61,6 +62,20 @@ def _compile(args: argparse.Namespace) -> int:
         return 0
     bundle = pipeline.execute()
     print(f'Bundle created: {bundle}')
+    return 0
+
+
+def _post_train(args: argparse.Namespace) -> int:
+    checkpoint = Path(args.checkpoint).expanduser().resolve()
+    output_dir = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir else checkpoint.parent / 'tensorrt')
+    result = convert_after_training(
+        args.config,
+        checkpoint,
+        output_dir,
+    )
+    print(f'Post-training TensorRT result: {result}')
     return 0
 
 
@@ -140,6 +155,18 @@ def build_parser() -> argparse.ArgumentParser:
         '--execute', action='store_true', help='perform GPU build instead of dry run')
     compile_parser.set_defaults(handler=_compile)
 
+    post_train_parser = subparsers.add_parser(
+        'post-train',
+        help='compile a completed FluxVLA checkpoint on the current GPU',
+    )
+    post_train_parser.add_argument('config', help='FluxVLA training config')
+    post_train_parser.add_argument('checkpoint', help='final training checkpoint')
+    post_train_parser.add_argument(
+        '--output-dir',
+        help='artifact directory (default: CHECKPOINT_DIR/tensorrt)',
+    )
+    post_train_parser.set_defaults(handler=_post_train)
+
     inspect_parser = subparsers.add_parser(
         'inspect', help='verify checksums and print bundle metadata')
     inspect_parser.add_argument('bundle')
@@ -190,6 +217,10 @@ def _subcommand_main(command: str) -> None:
 
 def compile_main() -> None:
     _subcommand_main('compile')
+
+
+def post_train_main() -> None:
+    _subcommand_main('post-train')
 
 
 def inspect_main() -> None:

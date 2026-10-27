@@ -41,6 +41,7 @@ class GR00TN15ModelFamily(ModelFamily):
     """Seven-graph TensorRT deployment for FluxVLA GR00T-N1.5."""
 
     name = 'groot_n15'
+    export_dtype = 'float16'
 
     @classmethod
     def matches(cls, model_config: Any) -> bool:
@@ -63,6 +64,74 @@ class GR00TN15ModelFamily(ModelFamily):
             if isinstance(action_head, Mapping) else action_head.type)
         return (backbone_type == 'EagleBackbone'
                 and action_head_type == 'FlowMatchingHead')
+
+    @classmethod
+    def configure_model(cls, model_config: Any) -> None:
+        if isinstance(model_config, Mapping):
+            backbone = model_config['vlm_backbone']
+        else:
+            backbone = model_config.vlm_backbone
+        if isinstance(backbone, Mapping):
+            backbone['dtype'] = 'float16'
+            backbone['attention_implementation'] = 'eager'
+        else:
+            backbone.dtype = 'float16'
+            backbone.attention_implementation = 'eager'
+
+    def make_representative_inputs(
+        self,
+        model: Any,
+        model_config: Any,
+        device: Any,
+    ) -> Mapping[str, Any]:
+        del model_config
+        eagle = model.vlm_backbone
+        action_head = model.vla_head
+        generator = torch.Generator(device=device)
+        generator.manual_seed(0)
+        image_size = int(eagle.vlm.vision_model.config.image_size)
+        image_views = 2
+        sequence_length = 600
+        image_tokens = image_views * int(eagle.vlm.num_image_token)
+        state_dim = int(action_head.state_encoder.layer1.W.shape[1])
+        lang_tokens = torch.zeros(1, sequence_length, dtype=torch.int64, device=device)
+        lang_tokens[:, :image_tokens] = int(eagle.vlm.image_token_index)
+        return {
+            'images':
+            torch.randn(
+                1,
+                image_views * 3,
+                image_size,
+                image_size,
+                dtype=torch.float32,
+                device=device,
+                generator=generator,
+            ),
+            'lang_tokens':
+            lang_tokens,
+            'states':
+            torch.zeros(
+                1,
+                state_dim,
+                dtype=torch.float32,
+                device=device,
+            ),
+            'img_masks':
+            torch.ones(1, image_views, dtype=torch.bool, device=device),
+            'lang_masks':
+            torch.ones(1, sequence_length, dtype=torch.bool, device=device),
+            'embodiment_ids':
+            torch.zeros(1, dtype=torch.int64, device=device),
+            'noise':
+            torch.randn(
+                1,
+                int(action_head.num_steps),
+                int(action_head.action_dim),
+                dtype=torch.float32,
+                device=device,
+                generator=generator,
+            ),
+        }
 
     def prepare(
         self,

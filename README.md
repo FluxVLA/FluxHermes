@@ -88,6 +88,20 @@ fluxhermes compile configs/pi05/pi05_aloha_fp16.py --execute
 fluxhermes inspect artifacts/pi05-aloha-fp16
 ```
 
+To compile a supported PI0.5 or GR00T-N1.5 checkpoint directly from its
+training config, call the post-training entry point from the rank-zero training
+runner's completion callback:
+
+```bash
+fluxhermes post-train /path/to/training_config.py /path/to/model.safetensors \
+  --output-dir /path/to/work_dir/tensorrt
+```
+
+The command uses the current CUDA device. It writes one ONNX file and one
+TensorRT plan per model partition, validates end-to-end actions, saves the
+accelerated output sample, and records the target GPU and TensorRT version in
+`result.json`.
+
 INT8 additionally requires a directory of representative NPZ samples:
 
 ```bash

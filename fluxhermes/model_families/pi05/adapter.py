@@ -49,10 +49,78 @@ class PI05ModelFamily(ModelFamily):
     """Three-graph TensorRT deployment for FluxVLA PI0.5."""
 
     name = 'pi05'
+    export_dtype = 'bfloat16'
 
     @classmethod
     def matches(cls, model_config: Any) -> bool:
         return _model_type(model_config) == 'PI05FlowMatching'
+
+    def make_representative_inputs(
+        self,
+        model: Any,
+        model_config: Any,
+        device: Any,
+    ) -> Mapping[str, Any]:
+        del model_config
+        contract = PI05Contract(
+            action_horizon=int(model.n_action_steps),
+            action_dim=int(model.max_action_dim),
+            denoise_steps=int(model.num_steps),
+        )
+        generator = torch.Generator(device=device)
+        generator.manual_seed(0)
+        vocab_size = int(model.llm_backbone.config.vocab_size)
+        return {
+            'images':
+            torch.randn(
+                contract.batch,
+                contract.image_views * 3,
+                contract.image_height,
+                contract.image_width,
+                dtype=torch.float32,
+                device=device,
+                generator=generator,
+            ),
+            'lang_tokens':
+            torch.randint(
+                0,
+                vocab_size,
+                (contract.batch, contract.language_tokens),
+                dtype=torch.int32,
+                device=device,
+                generator=generator,
+            ),
+            'states':
+            torch.zeros(
+                contract.batch,
+                contract.action_dim,
+                dtype=torch.float32,
+                device=device,
+            ),
+            'img_masks':
+            torch.ones(
+                contract.batch,
+                contract.image_views,
+                dtype=torch.bool,
+                device=device,
+            ),
+            'lang_masks':
+            torch.ones(
+                contract.batch,
+                contract.language_tokens,
+                dtype=torch.bool,
+                device=device,
+            ),
+            'noise':
+            torch.randn(
+                contract.batch,
+                contract.action_horizon,
+                contract.action_dim,
+                dtype=torch.float32,
+                device=device,
+                generator=generator,
+            ),
+        }
 
     def prepare(
         self,
