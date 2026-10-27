@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
+from ..contracts import TensorSpec
+
 
 @dataclass
 class PreparedModel:
@@ -35,6 +37,8 @@ class PreparedModel:
     def as_graph(
         self,
         name: str = 'model',
+        input_specs: Tuple[TensorSpec, ...] = (),
+        export_options: Optional[Mapping[str, Any]] = None,
         build_options: Optional[Mapping[str, Any]] = None,
     ) -> 'PreparedGraph':
         """Wrap the legacy single-model contract as one named export graph."""
@@ -46,6 +50,8 @@ class PreparedModel:
             calibration_source=self.calibration_source,
             metadata=dict(self.metadata),
             name=name,
+            input_specs=input_specs,
+            export_options=dict(export_options or {}),
             build_options=dict(build_options or {}),
         )
 
@@ -55,11 +61,23 @@ class PreparedGraph(PreparedModel):
     """One named graph in a potentially partitioned deployment."""
 
     name: str = 'model'
+    input_specs: Tuple[TensorSpec, ...] = field(default_factory=tuple)
+    export_options: Dict[str, Any] = field(default_factory=dict)
     build_options: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.input_specs = tuple(self.input_specs)
+        self.export_options = dict(self.export_options)
+        self.build_options = dict(self.build_options)
         if not self.name:
             raise ValueError('PreparedGraph.name cannot be empty.')
+        if self.input_specs:
+            spec_names = tuple(spec.name for spec in self.input_specs)
+            input_names = tuple(self.inputs)
+            if spec_names != input_names:
+                raise ValueError(
+                    f'{self.name}: input_specs {spec_names} do not match '
+                    f'prepared inputs {input_names}.')
 
 
 @dataclass
@@ -101,10 +119,17 @@ class PreparedDeployment:
         prepared: PreparedModel,
         family: str = 'generic',
         graph_name: str = 'model',
+        input_specs: Tuple[TensorSpec, ...] = (),
+        export_options: Optional[Mapping[str, Any]] = None,
         build_options: Optional[Mapping[str, Any]] = None,
     ) -> 'PreparedDeployment':
         """Promote a legacy single graph without changing existing adapters."""
-        graph = prepared.as_graph(graph_name, build_options=build_options)
+        graph = prepared.as_graph(
+            graph_name,
+            input_specs=input_specs,
+            export_options=export_options,
+            build_options=build_options,
+        )
         return cls(
             family=family,
             graphs={graph_name: graph},

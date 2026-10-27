@@ -11,11 +11,17 @@ MODEL_FAMILIES: Registry[Type[ModelFamily]] = Registry('model_families')
 
 def get_model_family(name: str) -> Type[ModelFamily]:
     """Return one explicitly selected model-family implementation."""
+    from . import register_builtin_model_families
+
+    register_builtin_model_families()
     return MODEL_FAMILIES.get(name)
 
 
 def detect_model_family(model_config: Any) -> Type[ModelFamily]:
     """Resolve exactly one registered family from a source-model config."""
+    from . import register_builtin_model_families
+
+    register_builtin_model_families()
     matches = [
         (name, family)
         for name, family in MODEL_FAMILIES.module_dict.items()
