@@ -89,6 +89,7 @@ class PreparedDeployment:
     reference_runner: Callable[[], Mapping[str, Any]]
     output_names: Tuple[str, ...]
     metadata: Dict[str, Any] = field(default_factory=dict)
+    runtime_resources: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.family:
@@ -97,6 +98,8 @@ class PreparedDeployment:
             raise ValueError('PreparedDeployment.output_names cannot be empty.')
         if len(self.output_names) != len(set(self.output_names)):
             raise ValueError('PreparedDeployment.output_names must be unique.')
+        self.metadata = dict(self.metadata)
+        self.runtime_resources = dict(self.runtime_resources)
 
         graphs = dict(self.graphs)
         if not graphs:
