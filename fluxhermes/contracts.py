@@ -236,11 +236,45 @@ class BundleManifest:
     validation: Dict[str, Any]
     files: Dict[str, str]
     metadata: Dict[str, Any] = field(default_factory=dict)
+    backend_artifacts: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        backend_files = tuple(str(path) for path in self.backend_files)
+        backend_artifacts = {
+            str(name): str(path)
+            for name, path in self.backend_artifacts.items()
+        }
+        if backend_files and backend_artifacts:
+            if tuple(backend_artifacts.values()) != backend_files:
+                raise ConfigurationError(
+                    'Bundle backend_files and backend_artifacts do not match.')
+        elif backend_artifacts:
+            backend_files = tuple(backend_artifacts.values())
+        elif backend_files:
+            names = (['model'] if len(backend_files) == 1 else
+                     [Path(path).stem for path in backend_files])
+            if len(names) != len(set(names)):
+                names = [f'artifact_{index}' for index in range(len(backend_files))]
+            backend_artifacts = dict(zip(names, backend_files))
+        else:
+            raise ConfigurationError('Bundle manifest has no backend files.')
+        if any(not name for name in backend_artifacts):
+            raise ConfigurationError('Bundle backend artifact names cannot be empty.')
+        if any(
+                Path(name).name != name or name in {'.', '..'}
+                for name in backend_artifacts):
+            raise ConfigurationError(
+                'Bundle backend artifact names must be safe names.')
+        if len(backend_files) != len(set(backend_files)):
+            raise ConfigurationError(
+                'Bundle backend artifacts must reference unique files.')
+        object.__setattr__(self, 'backend_files', backend_files)
+        object.__setattr__(self, 'backend_artifacts', backend_artifacts)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> 'BundleManifest':
         schema_version = int(data.get('schema_version', 0))
-        if schema_version not in {1, 2}:
+        if schema_version not in {1, 2, 3}:
             raise ConfigurationError(
                 f"Unsupported bundle schema: {data.get('schema_version')}")
         if schema_version == 1:
@@ -250,11 +284,11 @@ class BundleManifest:
             backend_files = tuple(
                 legacy_files or ([legacy_path] if legacy_path else ()))
             backend_metadata = legacy
+            backend_artifacts = {}
         else:
             backend_files = tuple(data.get('backend_files', ()))
             backend_metadata = dict(data.get('backend_metadata', {}))
-        if not backend_files:
-            raise ConfigurationError('Bundle manifest has no backend files.')
+            backend_artifacts = dict(data.get('backend_artifacts', {}))
         return cls(
             schema_version=schema_version,
             name=str(data['name']),
@@ -270,11 +304,13 @@ class BundleManifest:
             validation=dict(data.get('validation', {})),
             files=dict(data.get('files', {})),
             metadata=dict(data.get('metadata', {})),
+            backend_artifacts=backend_artifacts,
         )
 
     def to_dict(self) -> Dict[str, Any]:
         result = asdict(self)
         result['backend_files'] = list(self.backend_files)
+        result['backend_artifacts'] = dict(self.backend_artifacts)
         result['inputs'] = [spec.to_dict() for spec in self.inputs]
         result['outputs'] = [spec.to_dict() for spec in self.outputs]
         return result

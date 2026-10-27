@@ -1,5 +1,5 @@
-from .base import (BACKENDS, BackendBuildResult, BaseBackendManager, BaseBackendWrapper,
-                   get_backend_manager)
+from .base import (BACKENDS, BackendBuildResult, BackendIR, BaseBackendManager,
+                   BaseBackendWrapper, get_backend_manager)
 
 
 def register_builtin_backends() -> None:
@@ -9,6 +9,7 @@ def register_builtin_backends() -> None:
 __all__ = [
     'BACKENDS',
     'BackendBuildResult',
+    'BackendIR',
     'BaseBackendManager',
     'BaseBackendWrapper',
     'get_backend_manager',

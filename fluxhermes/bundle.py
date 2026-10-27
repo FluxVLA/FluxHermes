@@ -27,7 +27,8 @@ def verify_bundle(bundle_dir: str | Path) -> BundleManifest:
     root = Path(bundle_dir).expanduser().resolve()
     manifest = load_manifest(root)
     unchecked_backend_files = [
-        path for path in manifest.backend_files if path not in manifest.files
+        path for path in manifest.backend_artifacts.values()
+        if path not in manifest.files
     ]
     if unchecked_backend_files:
         raise ArtifactError(
@@ -108,6 +109,7 @@ def describe_bundle(bundle_dir: str | Path) -> str:
         'precision': manifest.precision,
         'validated': bool(manifest.validation.get('passed', False)),
         'backend_files': list(manifest.backend_files),
+        'backend_artifacts': dict(manifest.backend_artifacts),
         'backend_metadata': manifest.backend_metadata,
         'inputs': [item.to_dict() for item in manifest.inputs],
         'outputs': [item.to_dict() for item in manifest.outputs],

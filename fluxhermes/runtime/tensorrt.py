@@ -65,17 +65,19 @@ class TensorRTEngine:
     ) -> 'TensorRTEngine':
         root = Path(bundle_dir).expanduser().resolve()
         manifest = verify_bundle(root)
-        if len(manifest.backend_files) != 1:
+        if len(manifest.backend_artifacts) != 1:
             raise ArtifactError(
                 'TensorRT low-level runtime expects exactly one backend file.')
-        relative = manifest.backend_files[0]
+        name, relative = next(iter(manifest.backend_artifacts.items()))
         instance = cls(
             root / relative,
             profile_index=profile_index,
             device=device,
         )
         if require_target_match:
-            instance._check_target(manifest.backend_metadata)
+            artifact_metadata = manifest.backend_metadata.get('artifacts', {})
+            expected = artifact_metadata.get(name, manifest.backend_metadata)
+            instance._check_target(expected)
         return instance
 
     def _check_target(self, expected: Mapping[str, Any]) -> None:

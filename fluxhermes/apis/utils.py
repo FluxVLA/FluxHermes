@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 
 from ..backend import get_backend_manager
 from ..codebase import get_codebase
@@ -44,6 +44,23 @@ def get_backend_files_from_manifest(
     return files
 
 
+def get_backend_artifacts_from_manifest(
+    manifest: BundleManifest,
+    bundle_dir: str | Path,
+) -> Dict[str, Path]:
+    root = Path(bundle_dir).expanduser().resolve()
+    artifacts = {
+        name: (root / relative).resolve()
+        for name, relative in manifest.backend_artifacts.items()
+    }
+    for path in artifacts.values():
+        try:
+            path.relative_to(root)
+        except ValueError as error:
+            raise ArtifactError(f'Unsafe backend file path: {path}') from error
+    return artifacts
+
+
 def build_backend_wrapper(
     manifest: BundleManifest,
     bundle_dir: str | Path,
@@ -57,7 +74,7 @@ def build_backend_wrapper(
     for module in backend_config.get('custom_modules', ()):
         importlib.import_module(str(module))
     manager = get_backend_manager(manifest.backend)
-    files = get_backend_files_from_manifest(manifest, bundle_dir)
+    files = get_backend_artifacts_from_manifest(manifest, bundle_dir)
     return manager.build_wrapper(
         files,
         device=device,

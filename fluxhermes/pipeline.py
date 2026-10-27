@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .apis import build_task_processor, import_config_plugins
-from .backend import get_backend_manager
+from .backend import BackendIR, get_backend_manager
 from .bundle import create_bundle
 from .contracts import BundleManifest, DeploymentConfig
 from .core import FUNCTION_REWRITER, PipelineManager
@@ -204,14 +204,19 @@ class CompilePipeline:
         backend_result = self.pipeline_manager.run(
             'build_backend',
             backend_manager.to_backend,
-            [graph_path],
+            {
+                'model': BackendIR(
+                    path=graph_path,
+                    inputs=self.config.inputs,
+                )
+            },
             work_dir,
             self.config,
         )
 
         if bool(self.config.validation.get('enabled', True)):
             wrapper = backend_manager.build_wrapper(
-                backend_result.files,
+                backend_result.artifacts,
                 device=device,
                 require_target_match=False,
             )
@@ -238,16 +243,17 @@ class CompilePipeline:
         runtime = dict(self.config.package.get('runtime', {}))
         runtime.setdefault('action_output', self.config.outputs[0].name)
 
-        backend_relative_files = [
-            f'backend/{path.name}' for path in backend_result.files
-        ]
+        backend_relative_artifacts = {
+            name: f'backend/{path.name}'
+            for name, path in backend_result.artifacts.items()
+        }
         manifest = BundleManifest(
-            schema_version=2,
+            schema_version=3,
             name=self.config.name,
             created_at=datetime.now(timezone.utc).isoformat(),
             backend=backend_name,
             precision=self.config.precision,
-            backend_files=tuple(backend_relative_files),
+            backend_files=tuple(backend_relative_artifacts.values()),
             backend_metadata=dict(backend_result.metadata),
             source=source_metadata,
             inputs=self.config.inputs,
@@ -255,6 +261,7 @@ class CompilePipeline:
             runtime=runtime,
             validation=validation,
             files={},
+            backend_artifacts=backend_relative_artifacts,
             metadata={
                 'codebase_config': self.config.codebase,
                 'backend_config': self.config.backend,
@@ -266,9 +273,8 @@ class CompilePipeline:
         )
 
         bundle_files: Dict[str, str | Path] = {
-            relative: source
-            for relative, source in zip(
-                backend_relative_files, backend_result.files)
+            backend_relative_artifacts[name]: source
+            for name, source in backend_result.artifacts.items()
         }
         bundle_files['build/resolved_config.json'] = (
             work_dir / 'resolved_config.json')
