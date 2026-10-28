@@ -73,10 +73,8 @@ class GR00TN15ModelFamily(ModelFamily):
             backbone = model_config.vlm_backbone
         if isinstance(backbone, Mapping):
             backbone['dtype'] = 'float16'
-            backbone['attention_implementation'] = 'eager'
         else:
             backbone.dtype = 'float16'
-            backbone.attention_implementation = 'eager'
 
     def make_representative_inputs(
         self,
@@ -227,7 +225,7 @@ class GR00TN15ModelFamily(ModelFamily):
             )
 
         export_options = {'opset': 19, 'dynamo': False}
-        build_options = {'precision': 'fp16', 'strongly_typed': False}
+        build_options = {'precision': 'fp16'}
         graphs = {
             'vit':
             PreparedGraph(

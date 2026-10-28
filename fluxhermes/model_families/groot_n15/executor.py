@@ -231,16 +231,40 @@ class GR00TReferenceExecutor:
     def infer(self, inputs: Mapping[str, Any]) -> Dict[str, torch.Tensor]:
         prepared = prepare_policy_inputs(inputs, self.contract)
         with torch.inference_mode():
-            actions = self.model.predict_action(
+            features, attention_mask, _ = self.model.vlm_backbone(
                 images=prepared['images'],
                 lang_tokens=prepared['lang_tokens'],
-                states=prepared['state'].squeeze(1),
                 img_masks=prepared['img_masks'],
                 lang_masks=prepared['attention_mask'],
-                embodiment_ids=prepared['embodiment_id'],
-                noise=prepared['noise'],
             )
-        return {'actions': actions}
+            head = self.model.vla_head
+            features = head.vl_self_attention(head.vlln(features))
+            state_features = head.state_encoder(
+                prepared['state'], prepared['embodiment_id'])
+            actions = prepared['noise'].to(features.dtype).clone()
+            dt = 1.0 / self.contract.denoise_steps
+            for step in range(self.contract.denoise_steps):
+                discretized = int(
+                    (step / float(self.contract.denoise_steps)) *
+                    head.num_timestep_buckets)
+                timestep = torch.full(
+                    (self.contract.batch, ),
+                    discretized,
+                    dtype=torch.int64,
+                    device=actions.device,
+                )
+                velocity = head.denoise_step(
+                    actions,
+                    features,
+                    state_features,
+                    attention_mask,
+                    prepared['embodiment_id'],
+                    timestep,
+                )
+                actions = actions + dt * velocity
+            if head.ori_action_dim is not None:
+                actions = actions[:, :, :head.ori_action_dim]
+        return {'actions': actions.float()}
 
     def __call__(self, inputs: Mapping[str, Any]) -> Dict[str, torch.Tensor]:
         return self.infer(inputs)
