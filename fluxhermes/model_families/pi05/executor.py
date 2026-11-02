@@ -125,7 +125,7 @@ def prepare_policy_inputs(
     if tensors['img_masks'].dtype != torch.bool:
         raise TypeError('img_masks must be BOOL.')
     if not bool(torch.all(tensors['img_masks']).item()):
-        raise ValueError('PI0.5 TensorRT requires both image views to be valid.')
+        raise ValueError('PI0.5 TensorRT requires every image view to be valid.')
     if tensors['lang_masks'].dtype != torch.bool:
         raise TypeError('lang_masks must be BOOL.')
     if tensors['noise'].dtype != torch.float32:
@@ -152,49 +152,29 @@ def prepare_policy_inputs(
     }
 
 
-class PI05ReferenceExecutor:
-    """Execute all three PI0.5 partitions with their PyTorch modules."""
+class PI05SourceReferenceExecutor:
+    """Execute the original FluxVLA PI0.5 policy for parity validation."""
 
     def __init__(
         self,
-        vision: Any,
-        prefix: Any,
-        denoise: Any,
+        model: Any,
         contract: PI05Contract,
     ) -> None:
-        self.vision = vision
-        self.prefix = prefix
-        self.denoise = denoise
+        self.model = model
         self.contract = contract
-        self.timesteps = euler_timesteps(contract.denoise_steps)
-        self.cache_names = cache_names(contract)
 
     def infer(self, inputs: Mapping[str, Any]) -> Dict[str, torch.Tensor]:
-        prepared = prepare_policy_inputs(inputs, self.contract)
+        prepare_policy_inputs(inputs, self.contract)
         with torch.inference_mode():
-            image_prefix = self.vision(prepared['images'])
-            caches = self.prefix(
-                image_prefix,
-                prepared['lang_tokens'],
-                prepared['lang_mask'],
+            actions = self.model.predict_action(
+                images=inputs['images'],
+                lang_tokens=inputs['lang_tokens'],
+                states=inputs['states'],
+                img_masks=inputs['img_masks'],
+                lang_masks=inputs['lang_masks'],
+                noise=inputs['noise'].clone(),
             )
-            if len(caches) != len(self.cache_names):
-                raise ValueError('PI0.5 prefix returned the wrong cache count.')
-            action = prepared['noise']
-            for value in self.timesteps:
-                timestep = torch.full(
-                    (self.contract.batch, ),
-                    value,
-                    dtype=torch.float32,
-                    device=action.device,
-                )
-                action = self.denoise(
-                    action,
-                    timestep,
-                    prepared['lang_mask'],
-                    *caches,
-                )
-        return {'actions': action}
+        return {'actions': actions.float()}
 
     def __call__(self, inputs: Mapping[str, Any]) -> Dict[str, torch.Tensor]:
         return self.infer(inputs)

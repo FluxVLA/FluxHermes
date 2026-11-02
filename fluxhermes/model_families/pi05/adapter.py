@@ -15,16 +15,18 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Mapping
 
 import torch
 
 from ...adapters.base import PreparedDeployment, PreparedGraph
 from ...contracts import TensorSpec
-from ..base import ModelFamily
+from ..base import ModelFamily, config_mappings, config_nodes
 from ..registry import MODEL_FAMILIES
 from .contract import PI05Contract, cache_names
-from .executor import PI05ReferenceExecutor, PI05TensorRTExecutor, prepare_policy_inputs
+from .executor import (PI05SourceReferenceExecutor, PI05TensorRTExecutor,
+                       prepare_policy_inputs)
 from .export import PI05DenoiseExport, PI05PrefixExport, PI05VisionExport
 
 
@@ -44,6 +46,41 @@ def _model_type(model_config: Any) -> str:
     return str(model_config.type)
 
 
+def _language_tokens(training_config: Any) -> int:
+    from fluxvla.transforms.transform_prompts import (LiberoPromptFromInputs,
+                                                      ProcessPrompts)
+
+    prompt_types = {
+        'ProcessPrompts': ProcessPrompts,
+        'LiberoPromptFromInputs': LiberoPromptFromInputs,
+    }
+    lengths = set()
+    for name, prompt_type in prompt_types.items():
+        default = inspect.signature(
+            prompt_type.__init__).parameters['max_len'].default
+        lengths.update(
+            int(node['max_len']) if 'max_len' in node else int(default)
+            for node in config_nodes(training_config, name))
+    if len(lengths) != 1:
+        raise ValueError(
+            'PI0.5 training config must resolve to one ProcessPrompts max_len; '
+            f'found {sorted(lengths)}.')
+    return lengths.pop()
+
+
+def _image_views_from_config(training_config: Any) -> int:
+    counts = {
+        len(node[key])
+        for node in config_mappings(training_config)
+        for key in ('video_keys', 'img_keys') if key in node
+    }
+    if len(counts) != 1:
+        raise ValueError(
+            'PI0.5 training config must resolve to one image-view count; '
+            f'found {sorted(counts)}.')
+    return counts.pop()
+
+
 @MODEL_FAMILIES.register_module('pi05')
 class PI05ModelFamily(ModelFamily):
     """Three-graph TensorRT deployment for FluxVLA PI0.5."""
@@ -58,11 +95,12 @@ class PI05ModelFamily(ModelFamily):
     def make_representative_inputs(
         self,
         model: Any,
-        model_config: Any,
+        training_config: Any,
         device: Any,
     ) -> Mapping[str, Any]:
-        del model_config
         contract = PI05Contract(
+            image_views=_image_views_from_config(training_config),
+            language_tokens=_language_tokens(training_config),
             action_horizon=int(model.n_action_steps),
             action_dim=int(model.max_action_dim),
             denoise_steps=int(model.num_steps),
@@ -260,12 +298,7 @@ class PI05ModelFamily(ModelFamily):
             'denoise': denoise_graph,
         }
         policy_inputs = dict(representative_inputs)
-        reference = PI05ReferenceExecutor(
-            vision,
-            prefix,
-            denoise,
-            contract,
-        )
+        reference = PI05SourceReferenceExecutor(model, contract)
         return PreparedDeployment(
             family=self.name,
             graphs=graphs,
@@ -277,7 +310,7 @@ class PI05ModelFamily(ModelFamily):
     def create_executor(
         self,
         engines: Mapping[str, Any],
-        deployment: PreparedDeployment,
+        metadata: Mapping[str, Any],
     ) -> PI05TensorRTExecutor:
-        contract = PI05Contract(**deployment.metadata['contract'])
+        contract = PI05Contract(**metadata['contract'])
         return PI05TensorRTExecutor(engines, contract)

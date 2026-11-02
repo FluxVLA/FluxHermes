@@ -44,6 +44,34 @@ def _normalize_ir_files(
     }
 
 
+def build_tensorrt_artifacts(
+    graphs: Mapping[str, BackendIR],
+    work_dir: Path,
+    base_options: Mapping[str, Any],
+) -> BackendBuildResult:
+    """Build one named TensorRT plan for each ONNX graph."""
+    artifacts: Dict[str, Path] = {}
+    graph_metadata: Dict[str, Dict[str, Any]] = {}
+    for raw_name, graph in graphs.items():
+        name = _artifact_name(raw_name)
+        output = work_dir / f'{name}.plan'
+        options = dict(base_options)
+        options.update(graph.options)
+        details = build_tensorrt_engine(
+            graph.path,
+            output,
+            graph.inputs,
+            options,
+        )
+        artifacts[name] = output
+        graph_metadata[name] = details
+
+    metadata: Dict[str, Any] = {'artifacts': graph_metadata}
+    if len(graph_metadata) == 1:
+        metadata.update(next(iter(graph_metadata.values())))
+    return BackendBuildResult(artifacts=artifacts, metadata=metadata)
+
+
 @BACKENDS.register_module('tensorrt')
 class TensorRTBackendManager(BaseBackendManager):
     backend_name = 'tensorrt'
@@ -66,28 +94,10 @@ class TensorRTBackendManager(BaseBackendManager):
         config: DeploymentConfig,
     ) -> BackendBuildResult:
         graphs = _normalize_ir_files(ir_files, config)
-        artifacts: Dict[str, Path] = {}
-        graph_metadata: Dict[str, Dict[str, Any]] = {}
-        for name, graph in graphs.items():
-            if len(graphs) == 1 and name == 'model':
-                output = work_dir / 'model.plan'
-            else:
-                output = work_dir / 'engines' / f'{name}.plan'
-            options = dict(config.backend)
-            options.update(graph.options)
-            details = build_tensorrt_engine(
-                graph.path,
-                output,
-                graph.inputs,
-                options,
-            )
-            artifacts[name] = output
-            graph_metadata[name] = details
-
-        metadata: Dict[str, Any] = {'artifacts': graph_metadata}
-        if len(graph_metadata) == 1:
-            metadata.update(next(iter(graph_metadata.values())))
-        return BackendBuildResult(artifacts=artifacts, metadata=metadata)
+        output_dir = (
+            work_dir if len(graphs) == 1 and 'model' in graphs else
+            work_dir / 'engines')
+        return build_tensorrt_artifacts(graphs, output_dir, config.backend)
 
     @classmethod
     def build_wrapper(

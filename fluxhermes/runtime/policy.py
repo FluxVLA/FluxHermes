@@ -56,6 +56,14 @@ class RobotPolicy:
             device=device,
             require_target_match=require_target_match,
         )
+        family_name = self.manifest.runtime.get('model_family')
+        if family_name:
+            from ..model_families import get_model_family
+            family = get_model_family(str(family_name))()
+            self.engine = family.create_executor(
+                self.engine.engines,
+                self.manifest.metadata,
+            )
         entrypoint = self.manifest.runtime.get('host_adapter')
         if entrypoint:
             add_python_paths([str(self.bundle_dir / 'assets')])

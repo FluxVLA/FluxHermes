@@ -57,11 +57,6 @@ class PI05Contract:
             raise ValueError(f'PI0.5 contract values must be positive: {invalid}')
         if self.batch != 1:
             raise ValueError('PI0.5 TensorRT supports batch size 1.')
-        if self.image_views != 2:
-            raise ValueError('PI0.5 TensorRT requires exactly two image views.')
-        if self.action_horizon != 10 or self.denoise_steps != 10:
-            raise ValueError('PI0.5 TensorRT requires action horizon 10 and exactly '
-                             '10 Euler steps.')
 
 
 def cache_names(contract: PI05Contract) -> tuple[str, ...]:

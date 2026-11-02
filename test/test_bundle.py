@@ -29,6 +29,35 @@ def manifest():
 
 class BundleTest(unittest.TestCase):
 
+    def test_round_trips_named_backend_artifacts(self):
+        manifest = BundleManifest(
+            schema_version=3,
+            name='multi-engine',
+            created_at='2026-01-01T00:00:00+00:00',
+            backend='tensorrt',
+            precision='fp16',
+            backend_files=(),
+            backend_artifacts={
+                'vision': 'backend/vision.plan',
+                'policy': 'backend/policy.plan',
+            },
+            backend_metadata={},
+            source={},
+            inputs=(),
+            outputs=(),
+            runtime={},
+            validation={'passed': True},
+            files={},
+        )
+
+        loaded = BundleManifest.from_dict(manifest.to_dict())
+
+        self.assertEqual(loaded.backend_artifacts, manifest.backend_artifacts)
+        self.assertEqual(
+            loaded.backend_files,
+            ('backend/vision.plan', 'backend/policy.plan'),
+        )
+
     def test_create_verify_and_detect_tamper(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

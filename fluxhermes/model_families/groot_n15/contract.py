@@ -35,6 +35,8 @@ class GR00TN15Contract:
     input_embedding_dim: int = 1536
     hidden_size: int = 1024
     denoise_steps: int = 4
+    timestep_buckets: int = 1000
+    output_action_dim: int = 32
 
     @property
     def image_tokens(self) -> int:
@@ -54,28 +56,8 @@ class GR00TN15Contract:
             raise ValueError(f'GR00T-N1.5 contract values must be positive: {invalid}')
         if self.batch != 1:
             raise ValueError('GR00T-N1.5 TensorRT supports batch size 1.')
-        static = {
-            'image_views': 2,
-            'image_size': 224,
-            'vision_patches': 256,
-            'projected_image_tokens_per_view': 256,
-            'sequence_length': 600,
-            'state_dim': 64,
-            'action_horizon': 10,
-            'action_dim': 32,
-            'future_tokens': 32,
-            'backbone_dim': 2048,
-            'vision_hidden': 1152,
-            'input_embedding_dim': 1536,
-            'hidden_size': 1024,
-            'denoise_steps': 4,
-        }
-        mismatches = {
-            name: (vars(self)[name], expected)
-            for name, expected in static.items() if vars(self)[name] != expected
-        }
-        if mismatches:
-            raise ValueError(
-                f'Unsupported GR00T-N1.5 static TensorRT contract: {mismatches}')
         if self.sequence_length < self.image_tokens:
             raise ValueError('GR00T-N1.5 sequence cannot hold all image tokens.')
+        if self.output_action_dim > self.action_dim:
+            raise ValueError(
+                'GR00T-N1.5 output action dimension cannot exceed action_dim.')

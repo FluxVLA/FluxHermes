@@ -21,12 +21,13 @@ import torch
 
 from ...adapters.base import PreparedDeployment, PreparedGraph
 from ...contracts import TensorSpec
-from ..base import ModelFamily
+from ..base import ModelFamily, config_nodes
 from ..registry import MODEL_FAMILIES
 from .contract import GR00TN15Contract
 from .executor import (GR00TReferenceExecutor, GR00TTensorRTExecutor, position_ids,
-                       prepare_language_inputs, prepare_policy_inputs)
-from .export import GR00TBackboneOutputExport, GR00TLanguageExport, GR00TVisionExport
+                       prepare_policy_inputs)
+from .export import (GR00TActionEncoderExport, GR00TBackboneOutputExport,
+                     GR00TLanguageExport, GR00TVisionExport)
 
 
 def _set_eager_attention(model: Any) -> None:
@@ -34,6 +35,28 @@ def _set_eager_attention(model: Any) -> None:
         config = getattr(module, 'config', None)
         if config is not None and hasattr(config, '_attn_implementation'):
             config._attn_implementation = 'eager'
+
+
+def _image_view_count(images: Any) -> int:
+    if isinstance(images, (list, tuple)):
+        return len(images)
+    if not isinstance(images, torch.Tensor):
+        raise TypeError('images must be a tensor or a list of tensors.')
+    if images.ndim != 4 or images.shape[1] % 3 != 0:
+        raise ValueError('Flattened images must have shape (B, 3V, H, W).')
+    return int(images.shape[1] // 3)
+
+
+def _prompt_shape(training_config: Any) -> tuple[int, int]:
+    shapes = {
+        (int(node['max_len']), int(node['num_images']))
+        for node in config_nodes(training_config, 'ProcessPromptsWithImage')
+    }
+    if len(shapes) != 1:
+        raise ValueError(
+            'GR00T-N1.5 training config must resolve to one prompt shape; '
+            f'found {sorted(shapes)}.')
+    return shapes.pop()
 
 
 @MODEL_FAMILIES.register_module('groot_n15')
@@ -79,17 +102,18 @@ class GR00TN15ModelFamily(ModelFamily):
     def make_representative_inputs(
         self,
         model: Any,
-        model_config: Any,
+        training_config: Any,
         device: Any,
     ) -> Mapping[str, Any]:
-        del model_config
         eagle = model.vlm_backbone
         action_head = model.vla_head
         generator = torch.Generator(device=device)
         generator.manual_seed(0)
         image_size = int(eagle.vlm.vision_model.config.image_size)
-        image_views = 2
-        sequence_length = 600
+        sequence_length, image_views = _prompt_shape(training_config)
+        if sequence_length != int(eagle.config.max_input_seq_len):
+            raise ValueError(
+                'GR00T-N1.5 prompt length does not match Eagle max_input_seq_len.')
         image_tokens = image_views * int(eagle.vlm.num_image_token)
         state_dim = int(action_head.state_encoder.layer1.W.shape[1])
         lang_tokens = torch.zeros(1, sequence_length, dtype=torch.int64, device=device)
@@ -152,7 +176,7 @@ class GR00TN15ModelFamily(ModelFamily):
         image_size = int(vision_config.image_size)
         patch_size = int(vision_config.patch_size)
         contract = GR00TN15Contract(
-            image_views=2,
+            image_views=_image_view_count(representative_inputs['images']),
             image_size=image_size,
             vision_patches=(image_size // patch_size)**2,
             projected_image_tokens_per_view=int(eagle.vlm.num_image_token),
@@ -166,6 +190,10 @@ class GR00TN15ModelFamily(ModelFamily):
             input_embedding_dim=int(action_head.input_embedding_dim),
             hidden_size=int(action_head.hidden_size),
             denoise_steps=int(action_head.num_inference_timesteps),
+            timestep_buckets=int(action_head.num_timestep_buckets),
+            output_action_dim=int(
+                action_head.ori_action_dim
+                if action_head.ori_action_dim is not None else action_head.action_dim),
         )
         if not action_head.add_positional_embeddings:
             raise ValueError('GR00T-N1.5 TensorRT requires action position embeddings.')
@@ -179,20 +207,19 @@ class GR00TN15ModelFamily(ModelFamily):
 
         _set_eager_attention(model)
         vision = GR00TVisionExport(eagle)
-        language = GR00TLanguageExport(eagle)
+        language = GR00TLanguageExport(eagle, contract)
         backbone_output = GR00TBackboneOutputExport(action_head)
+        action_encoder = GR00TActionEncoderExport(action_head, contract)
         prepared = prepare_policy_inputs(representative_inputs, contract)
         positions = position_ids(contract, prepared['pixel_values'].device)
 
         with torch.inference_mode():
             vit_embeds = vision(prepared['pixel_values'], positions)
-            input_embeds = prepare_language_inputs(
-                eagle,
+            embeddings = language(
                 vit_embeds,
                 prepared['lang_tokens'],
-                contract,
+                prepared['attention_mask'],
             )
-            embeddings = language(input_embeds, prepared['attention_mask'])
             backbone_features = backbone_output(embeddings)
             state_features = action_head.state_encoder(
                 prepared['state'],
@@ -204,20 +231,12 @@ class GR00TN15ModelFamily(ModelFamily):
                 device=prepared['noise'].device,
             )
             actions = prepared['noise'].to(torch.float16)
-            action_features = action_head.action_encoder(
+            sa_embs = action_encoder(
                 actions,
                 timestep,
                 prepared['embodiment_id'],
+                state_features,
             )
-            action_positions = torch.arange(
-                contract.action_horizon,
-                dtype=torch.int64,
-                device=actions.device,
-            )
-            action_features = action_features + action_head.position_embedding(
-                action_positions).unsqueeze(0)
-            future = action_head.future_tokens.weight.unsqueeze(0)
-            sa_embs = torch.cat((state_features, future, action_features), dim=1)
             model_output = action_head.model(
                 sa_embs,
                 backbone_features,
@@ -261,18 +280,24 @@ class GR00TN15ModelFamily(ModelFamily):
                 name='llm',
                 module=language,
                 inputs={
-                    'inputs_embeds': input_embeds,
+                    'vit_embeds': vit_embeds,
+                    'lang_tokens': prepared['lang_tokens'],
                     'attention_mask': prepared['attention_mask'],
                 },
                 input_specs=(
                     TensorSpec(
-                        'inputs_embeds',
+                        'vit_embeds',
                         'float16',
                         (
-                            contract.batch,
-                            contract.sequence_length,
-                            contract.backbone_dim,
+                            contract.image_views,
+                            contract.vision_patches,
+                            contract.vision_hidden,
                         ),
+                    ),
+                    TensorSpec(
+                        'lang_tokens',
+                        'int64',
+                        (contract.batch, contract.sequence_length),
                     ),
                     TensorSpec(
                         'attention_mask',
@@ -329,11 +354,12 @@ class GR00TN15ModelFamily(ModelFamily):
             'action_encoder':
             PreparedGraph(
                 name='action_encoder',
-                module=action_head.action_encoder,
+                module=action_encoder,
                 inputs={
                     'actions': actions,
                     'timesteps_tensor': timestep,
                     'embodiment_id': prepared['embodiment_id'],
+                    'state_features': state_features,
                 },
                 input_specs=(
                     TensorSpec(
@@ -355,8 +381,17 @@ class GR00TN15ModelFamily(ModelFamily):
                         'int64',
                         (contract.batch, ),
                     ),
+                    TensorSpec(
+                        'state_features',
+                        'float16',
+                        (
+                            contract.batch,
+                            1,
+                            contract.input_embedding_dim,
+                        ),
+                    ),
                 ),
-                output_names=('output', ),
+                output_names=('sa_embs', ),
                 export_options=export_options,
                 build_options=build_options,
             ),
@@ -435,22 +470,12 @@ class GR00TN15ModelFamily(ModelFamily):
             reference_runner=lambda: reference(reference_inputs),
             output_names=('actions', ),
             metadata={'contract': vars(contract).copy()},
-            runtime_resources={
-                'eagle_backbone': eagle,
-                'action_head': action_head,
-            },
         )
 
     def create_executor(
         self,
         engines: Mapping[str, Any],
-        deployment: PreparedDeployment,
+        metadata: Mapping[str, Any],
     ) -> GR00TTensorRTExecutor:
-        contract = GR00TN15Contract(**deployment.metadata['contract'])
-        resources = deployment.runtime_resources
-        return GR00TTensorRTExecutor(
-            engines,
-            resources['eagle_backbone'],
-            resources['action_head'],
-            contract,
-        )
+        contract = GR00TN15Contract(**metadata['contract'])
+        return GR00TTensorRTExecutor(engines, contract)

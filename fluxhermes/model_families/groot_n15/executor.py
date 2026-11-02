@@ -112,7 +112,8 @@ def prepare_policy_inputs(
         (contract.image_views, ),
         (contract.batch, contract.image_views),
     }:
-        raise ValueError('img_masks must describe exactly two image views.')
+        raise ValueError(
+            f'img_masks must describe exactly {contract.image_views} image views.')
 
     if tensors['lang_tokens'].dtype not in (torch.int32, torch.int64):
         raise TypeError('lang_tokens must be INT32 or INT64.')
@@ -121,7 +122,7 @@ def prepare_policy_inputs(
     if tensors['img_masks'].dtype != torch.bool:
         raise TypeError('img_masks must be BOOL.')
     if not bool(torch.all(tensors['img_masks']).item()):
-        raise ValueError('GR00T-N1.5 requires both image views to be valid.')
+        raise ValueError('GR00T-N1.5 requires every image view to be valid.')
     if tensors['lang_masks'].dtype not in (
             torch.bool,
             torch.int32,
@@ -168,58 +169,6 @@ def position_ids(
         dtype=torch.int64,
         device=device,
     )[None, :].expand(contract.image_views, -1).contiguous()
-
-
-def prepare_language_inputs(
-    eagle: Any,
-    vit_embeds: torch.Tensor,
-    lang_tokens: torch.Tensor,
-    contract: GR00TN15Contract,
-) -> torch.Tensor:
-    if eagle.vlm.use_pixel_shuffle:
-        side = int(vit_embeds.shape[1]**0.5)
-        if side * side != vit_embeds.shape[1]:
-            raise ValueError('Eagle pixel shuffle requires a square token grid.')
-        vit_embeds = vit_embeds.reshape(
-            contract.image_views,
-            side,
-            side,
-            contract.vision_hidden,
-        )
-        vit_embeds = eagle.vlm.pixel_shuffle(
-            vit_embeds,
-            scale_factor=eagle.vlm.downsample_ratio,
-        )
-        vit_embeds = vit_embeds.reshape(
-            contract.image_views,
-            -1,
-            vit_embeds.shape[-1],
-        )
-    vit_embeds = eagle.vlm.mlp1(vit_embeds).to(torch.float16).contiguous()
-    expected = (
-        contract.image_views,
-        contract.projected_image_tokens_per_view,
-        contract.backbone_dim,
-    )
-    if tuple(vit_embeds.shape) != expected:
-        raise ValueError(f'Eagle projected image tokens must be {expected}, got '
-                         f'{tuple(vit_embeds.shape)}.')
-    image_features = vit_embeds.reshape(
-        contract.batch,
-        contract.image_tokens,
-        contract.backbone_dim,
-    )
-
-    embedding = eagle.vlm.language_model.get_input_embeddings()
-    input_embeds = embedding(lang_tokens).to(torch.float16)
-    flat_embeds = input_embeds.reshape(-1, contract.backbone_dim).contiguous()
-    selected = lang_tokens.reshape(-1) == int(eagle.vlm.image_token_index)
-    flat_embeds[selected] = image_features.reshape(-1, contract.backbone_dim)
-    return flat_embeds.reshape(
-        contract.batch,
-        contract.sequence_length,
-        contract.backbone_dim,
-    ).contiguous()
 
 
 class GR00TReferenceExecutor:
@@ -275,8 +224,6 @@ class GR00TTensorRTExecutor:
     def __init__(
         self,
         engines: Mapping[str, Any],
-        eagle: Any,
-        action_head: Any,
         contract: GR00TN15Contract,
     ) -> None:
         missing = [name for name in GRAPH_NAMES if name not in engines]
@@ -284,11 +231,7 @@ class GR00TTensorRTExecutor:
         if missing or unknown:
             raise ValueError(f'GR00T-N1.5 engines mismatch: missing={missing}, '
                              f'unknown={unknown}.')
-        if not action_head.add_positional_embeddings:
-            raise ValueError('GR00T-N1.5 TensorRT requires action position embeddings.')
         self.engines = {name: engines[name] for name in GRAPH_NAMES}
-        self.eagle = eagle
-        self.action_head = action_head
         self.contract = contract
 
     def infer(
@@ -307,15 +250,11 @@ class GR00TTensorRTExecutor:
                 'position_ids':
                 positions,
             })['vit_embeds']
-            input_embeds = prepare_language_inputs(
-                self.eagle,
-                vit_embeds,
-                prepared['lang_tokens'],
-                contract,
-            )
             features = self.engines['llm'].infer({
-                'inputs_embeds':
-                input_embeds,
+                'vit_embeds':
+                vit_embeds,
+                'lang_tokens':
+                prepared['lang_tokens'],
                 'attention_mask':
                 prepared['attention_mask'],
             })['embeddings']
@@ -331,15 +270,6 @@ class GR00TTensorRTExecutor:
             })['output']
 
             actions = prepared['noise'].to(torch.float16).contiguous()
-            action_positions = torch.arange(
-                contract.action_horizon,
-                dtype=torch.int64,
-                device=device,
-            )
-            action_positions = self.action_head.position_embedding(
-                action_positions).unsqueeze(0).to(torch.float16)
-            future = self.action_head.future_tokens.weight.unsqueeze(0).to(
-                torch.float16)
             timestep = torch.empty(
                 (contract.batch, ),
                 dtype=torch.int64,
@@ -348,18 +278,18 @@ class GR00TTensorRTExecutor:
             dt = 1.0 / contract.denoise_steps
             for step in range(contract.denoise_steps):
                 discretized = int((step / float(contract.denoise_steps)) *
-                                  self.action_head.num_timestep_buckets)
+                                  contract.timestep_buckets)
                 timestep.fill_(discretized)
-                action_features = self.engines['action_encoder'].infer({
+                sa_embs = self.engines['action_encoder'].infer({
                     'actions':
                     actions,
                     'timesteps_tensor':
                     timestep,
                     'embodiment_id':
                     prepared['embodiment_id'],
-                })['output']
-                action_features = action_features + action_positions
-                sa_embs = torch.cat((state_features, future, action_features), dim=1)
+                    'state_features':
+                    state_features,
+                })['sa_embs']
                 model_output = self.engines['dit'].infer({
                     'sa_embs': sa_embs,
                     'vl_embs': features,
@@ -374,9 +304,7 @@ class GR00TTensorRTExecutor:
                 velocity = prediction[:, -contract.action_horizon:]
                 actions = actions + dt * velocity
 
-            original_dim = self.action_head.ori_action_dim
-            if original_dim is not None:
-                actions = actions[:, :, :original_dim]
+            actions = actions[:, :, :contract.output_action_dim]
             actions = actions.float()
             if synchronize:
                 torch.cuda.current_stream(device).synchronize()

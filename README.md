@@ -93,14 +93,36 @@ training config, call the post-training entry point from the rank-zero training
 runner's completion callback:
 
 ```bash
+pip install -e '.[post-train]'
+```
+
+Install the TensorRT Python package matching the CUDA/TensorRT installation on
+the build GPU. The conversion imports FluxVLA from the active training
+environment, so the training config may live outside the FluxVLA checkout.
+
+```bash
 fluxhermes post-train /path/to/training_config.py /path/to/model.safetensors \
   --output-dir /path/to/work_dir/tensorrt
+```
+
+Training runners can invoke the same operation after releasing their training
+model and process group:
+
+```python
+from fluxhermes import convert_after_training
+
+if rank == 0:
+    convert_after_training(config_path, checkpoint_path, output_dir)
 ```
 
 The command uses the current CUDA device. It writes one ONNX file and one
 TensorRT plan per model partition, validates end-to-end actions, saves the
 accelerated output sample, and records the target GPU and TensorRT version in
-`result.json`.
+`result.json`. It derives the action horizon and token lengths from the training
+configuration, records PyTorch/TensorRT latency and speedup, and writes a
+checksum-protected `manifest.json` that can be loaded as a FluxHermes bundle.
+The manifest also records the exact FluxVLA Git commit and whether that source
+checkout contained local changes.
 
 INT8 additionally requires a directory of representative NPZ samples:
 

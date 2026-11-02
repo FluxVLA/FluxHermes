@@ -64,6 +64,7 @@ def _gated_residual(x: torch.Tensor, y: torch.Tensor,
 
 
 class PI05VisionExport(nn.Module):
+    """Export the PI0.5 vision backbone and projector."""
 
     def __init__(self, model: nn.Module, contract: PI05Contract) -> None:
         super().__init__()
@@ -118,6 +119,7 @@ def _prefix_inputs(
 
 
 class PI05PrefixExport(nn.Module):
+    """Export prefix attention and its reusable key/value cache."""
 
     def __init__(self, model: nn.Module, contract: PI05Contract) -> None:
         super().__init__()
@@ -210,6 +212,7 @@ class PI05PrefixExport(nn.Module):
 
 
 class PI05DenoiseExport(nn.Module):
+    """Export one complete PI0.5 Euler denoising update."""
 
     def __init__(self, model: nn.Module, contract: PI05Contract) -> None:
         super().__init__()

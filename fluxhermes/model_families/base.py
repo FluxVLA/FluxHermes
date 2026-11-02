@@ -1,9 +1,29 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from typing import Any, Mapping, Tuple
 
 from ..adapters.base import PreparedDeployment
+
+
+def config_mappings(value: Any) -> Tuple[Mapping[str, Any], ...]:
+    """Return all mappings nested in a normalized training config."""
+    nodes = []
+    if isinstance(value, Mapping):
+        nodes.append(value)
+        for child in value.values():
+            nodes.extend(config_mappings(child))
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            nodes.extend(config_mappings(child))
+    return tuple(nodes)
+
+
+def config_nodes(value: Any, node_type: str) -> Tuple[Mapping[str, Any], ...]:
+    """Return every nested config mapping with the requested type."""
+    return tuple(
+        node for node in config_mappings(value)
+        if 'type' in node and node['type'] == node_type)
 
 
 class ModelFamily(ABC):
@@ -30,7 +50,7 @@ class ModelFamily(ABC):
     def make_representative_inputs(
         self,
         model: Any,
-        model_config: Any,
+        training_config: Any,
         device: Any,
     ) -> Mapping[str, Any]:
         """Create deterministic policy inputs for export and parity checks."""
@@ -48,6 +68,6 @@ class ModelFamily(ABC):
     def create_executor(
         self,
         engines: Mapping[str, Any],
-        deployment: PreparedDeployment,
+        metadata: Mapping[str, Any],
     ) -> Any:
         """Create the end-to-end executor from named compiled engines."""
