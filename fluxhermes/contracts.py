@@ -42,8 +42,8 @@ class TensorSpec:
         if not self.dtype:
             raise ConfigurationError(f'{self.name}: dtype cannot be empty.')
         profiles = (self.min_shape, self.opt_shape, self.max_shape)
-        if any(item is not None for item in profiles) and not all(
-                item is not None for item in profiles):
+        if any(item is not None for item in profiles) and not all(item is not None
+                                                                  for item in profiles):
             raise ConfigurationError(
                 f'{self.name}: min/opt/max shapes must be provided together.')
         if all(item is not None for item in profiles):
@@ -54,8 +54,8 @@ class TensorSpec:
             assert self.min_shape is not None
             assert self.opt_shape is not None
             assert self.max_shape is not None
-            for minimum, optimum, maximum in zip(
-                    self.min_shape, self.opt_shape, self.max_shape):
+            for minimum, optimum, maximum in zip(self.min_shape, self.opt_shape,
+                                                 self.max_shape):
                 if not minimum <= optimum <= maximum:
                     raise ConfigurationError(
                         f'{self.name}: expected min <= opt <= max, got '
@@ -122,10 +122,17 @@ class DeploymentConfig:
         codebase = cls._normalize_codebase(data)
         backend = cls._normalize_backend(data)
         ir = cls._normalize_ir(data)
+        if codebase['type'] == 'fluxvla' and codebase['task'] == 'export_package':
+            backend.setdefault('precision', 'fp32')
+            ir.setdefault('do_constant_folding', False)
+            if backend['type'] == 'tensorrt':
+                backend.setdefault('strongly_typed', True)
+                backend.setdefault('tf32', False)
         default_precision = 'fp16' if backend.get('type') == 'tensorrt' else 'fp32'
         precision = str(backend.get('precision', default_precision))
         if backend.get('type') == 'tensorrt' and precision not in {
-                'fp32', 'fp16', 'int8'}:
+                'fp32', 'fp16', 'int8'
+        }:
             raise ConfigurationError(f'Unsupported TensorRT precision: {precision}')
         timing_cache = backend.get('timing_cache')
         if timing_cache and config_path is not None:
@@ -133,7 +140,7 @@ class DeploymentConfig:
             if not timing_path.is_absolute():
                 backend['timing_cache'] = str(
                     (config_path.parent / timing_path).resolve())
-        return cls(
+        result = cls(
             name=str(data['name']),
             work_dir=work_dir,
             codebase=codebase,
@@ -148,6 +155,31 @@ class DeploymentConfig:
             pipeline_hooks=tuple(data.get('pipeline_hooks', ())),
             config_path=config_path,
         )
+        result.validate_source_boundary()
+        return result
+
+    def validate_source_boundary(self) -> None:
+        """Reject source-checkout injection before any config plugin is imported."""
+        if not (self.codebase.get('type') == 'fluxvla'
+                and self.codebase.get('task') == 'export_package'):
+            return
+        for label, section in (('codebase_config', self.codebase),
+                               ('codebase_config.source', self.source)):
+            for key in ('python_paths', 'custom_modules', 'fluxvla_root'):
+                if key in section:
+                    raise ConfigurationError(
+                        f'{label}.{key} is not allowed for the installed '
+                        'export package.')
+        if self.precision != 'fp32':
+            raise ConfigurationError(
+                'export_package requires precision=fp32 to preserve graph dtypes.')
+        if self.backend['type'] == 'tensorrt':
+            if self.backend.get('strongly_typed') is not True:
+                raise ConfigurationError(
+                    'export_package requires TensorRT strongly_typed=True.')
+            if self.backend.get('tf32') is not False:
+                raise ConfigurationError(
+                    'export_package requires tf32=False for protected FP32 math.')
 
     @staticmethod
     def _normalize_codebase(data: Mapping[str, Any]) -> Dict[str, Any]:
@@ -158,8 +190,7 @@ class DeploymentConfig:
             source_type = str(source.get('type', ''))
             codebase = {
                 'type': source_type,
-                'task': (
-                    'predict_action' if source_type == 'fluxvla' else 'custom'),
+                'task': ('predict_action' if source_type == 'fluxvla' else 'custom'),
                 'source': source,
             }
         else:

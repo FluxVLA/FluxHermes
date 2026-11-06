@@ -35,6 +35,14 @@ def export_onnx(
         kwargs['dynamo'] = bool(options.get('dynamo', False))
     if 'external_data' in signature.parameters:
         kwargs['external_data'] = bool(options.get('external_data', True))
+    if 'optimize' in options:
+        if 'optimize' not in signature.parameters:
+            raise DependencyError(
+                'This PyTorch ONNX exporter does not support optimize; '
+                'use the verified export environment.')
+        kwargs['optimize'] = bool(options['optimize'])
+    if kwargs.get('dynamo') and 'fallback' in signature.parameters:
+        kwargs['fallback'] = False
     with torch.inference_mode():
         torch.onnx.export(prepared.module, arguments, str(output), **kwargs)
     if not output.is_file():
@@ -44,5 +52,6 @@ def export_onnx(
             import onnx
         except Exception as error:
             raise DependencyError('ONNX checking requires the onnx package.') from error
-        onnx.checker.check_model(str(output))
+        # A shallow check misses invalid BF16 operator/type/rank combinations.
+        onnx.checker.check_model(str(output), full_check=True)
     return output

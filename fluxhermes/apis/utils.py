@@ -58,6 +58,17 @@ def build_backend_wrapper(
         importlib.import_module(str(module))
     manager = get_backend_manager(manifest.backend)
     files = get_backend_files_from_manifest(manifest, bundle_dir)
+    if 'graphs' in manifest.backend_metadata:
+        from ..multigraph import build_multigraph_wrapper
+
+        return build_multigraph_wrapper(
+            manifest,
+            bundle_dir,
+            manager,
+            device=device,
+            profile_index=profile_index,
+            require_target_match=require_target_match,
+            **kwargs)
     return manager.build_wrapper(
         files,
         device=device,

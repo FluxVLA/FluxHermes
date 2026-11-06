@@ -35,12 +35,23 @@ class DeploymentConfigTest(unittest.TestCase):
             {
                 'name': 'test',
                 'work_dir': '../work',
-                'source': {'type': 'python', 'factory': 'x:y'},
+                'source': {
+                    'type': 'python',
+                    'factory': 'x:y'
+                },
                 'inputs': [
-                    {'name': 'x', 'dtype': 'float32', 'shape': (1, 2)},
+                    {
+                        'name': 'x',
+                        'dtype': 'float32',
+                        'shape': (1, 2)
+                    },
                 ],
                 'outputs': [
-                    {'name': 'y', 'dtype': 'float32', 'shape': (1, 2)},
+                    {
+                        'name': 'y',
+                        'dtype': 'float32',
+                        'shape': (1, 2)
+                    },
                 ],
             },
             config_path=path,
@@ -50,16 +61,31 @@ class DeploymentConfigTest(unittest.TestCase):
     def test_rejects_unknown_precision(self):
         with self.assertRaises(ConfigurationError):
             DeploymentConfig.from_dict({
-                'name': 'test',
-                'work_dir': '/tmp/work',
-                'source': {'type': 'python', 'factory': 'x:y'},
+                'name':
+                'test',
+                'work_dir':
+                '/tmp/work',
+                'source': {
+                    'type': 'python',
+                    'factory': 'x:y'
+                },
                 'inputs': [
-                    {'name': 'x', 'dtype': 'float32', 'shape': (1, 2)},
+                    {
+                        'name': 'x',
+                        'dtype': 'float32',
+                        'shape': (1, 2)
+                    },
                 ],
                 'outputs': [
-                    {'name': 'y', 'dtype': 'float32', 'shape': (1, 2)},
+                    {
+                        'name': 'y',
+                        'dtype': 'float32',
+                        'shape': (1, 2)
+                    },
                 ],
-                'tensorrt': {'precision': 'int4'},
+                'tensorrt': {
+                    'precision': 'int4'
+                },
             })
 
     def test_resolves_timing_cache_relative_to_config(self):
@@ -67,20 +93,32 @@ class DeploymentConfigTest(unittest.TestCase):
             {
                 'name': 'test',
                 'work_dir': '../work',
-                'source': {'type': 'python', 'factory': 'x:y'},
+                'source': {
+                    'type': 'python',
+                    'factory': 'x:y'
+                },
                 'inputs': [
-                    {'name': 'x', 'dtype': 'float32', 'shape': (1, 2)},
+                    {
+                        'name': 'x',
+                        'dtype': 'float32',
+                        'shape': (1, 2)
+                    },
                 ],
                 'outputs': [
-                    {'name': 'y', 'dtype': 'float32', 'shape': (1, 2)},
+                    {
+                        'name': 'y',
+                        'dtype': 'float32',
+                        'shape': (1, 2)
+                    },
                 ],
-                'tensorrt': {'timing_cache': '../cache/model.timing'},
+                'tensorrt': {
+                    'timing_cache': '../cache/model.timing'
+                },
             },
             config_path=Path('/tmp/configs/deploy.py'),
         )
-        self.assertEqual(
-            config.tensorrt['timing_cache'],
-            str(Path('/tmp/cache/model.timing').resolve()))
+        self.assertEqual(config.tensorrt['timing_cache'],
+                         str(Path('/tmp/cache/model.timing').resolve()))
 
 
 if __name__ == '__main__':

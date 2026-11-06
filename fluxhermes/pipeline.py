@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from .apis import build_task_processor, import_config_plugins
 from .backend import get_backend_manager
-from .bundle import create_bundle
+from .bundle import create_bundle, validate_bundle_destination
 from .contracts import BundleManifest, DeploymentConfig
 from .core import FUNCTION_REWRITER, PipelineManager
 from .errors import ConfigurationError
@@ -31,6 +31,7 @@ class CompilePipeline:
     """Codebase -> IR -> backend pipeline modeled after MMDeploy boundaries."""
 
     def __init__(self, config: DeploymentConfig) -> None:
+        config.validate_source_boundary()
         self.config = config
         self.pipeline_manager = PipelineManager()
         self._register_hooks()
@@ -118,42 +119,45 @@ class CompilePipeline:
         return resolved
 
     def _validate_precision_configuration(self) -> None:
-        if (
-            self.config.precision == 'fp16'
-            and not bool(self.config.optimization.get('fp16_conversion', True))
-            and not bool(
-                self.config.optimization.get('graph_is_explicitly_typed', False))
-        ):
+        if (self.config.precision == 'fp16'
+                and not bool(self.config.optimization.get('fp16_conversion', True))
+                and not bool(
+                    self.config.optimization.get('graph_is_explicitly_typed', False))):
             raise ConfigurationError(
                 'FP16 requires optimization.fp16_conversion=True or a task '
                 'processor that declares graph_is_explicitly_typed=True.')
 
     def execute(self) -> Path:
+        validate_bundle_destination(self._bundle_dir())
         work_dir = self.config.work_dir
         work_dir.mkdir(parents=True, exist_ok=True)
         write_json(work_dir / 'resolved_config.json', self.config.to_dict())
         self._validate_precision_configuration()
 
         device = str(
-            self.config.codebase.get(
-                'device', self.config.source.get('device', 'cuda:0')))
+            self.config.codebase.get('device',
+                                     self.config.source.get('device', 'cuda:0')))
         task_processor = self.pipeline_manager.run(
             'build_task_processor',
             build_task_processor,
             self.config,
             device,
         )
-        prepared = self.pipeline_manager.run(
-            'prepare_model', task_processor.prepare_model)
+        prepared = self.pipeline_manager.run('prepare_model',
+                                             task_processor.prepare_model)
+        if hasattr(prepared, 'graphs'):
+            from .multigraph import execute_multigraph
+
+            return execute_multigraph(self, prepared, task_processor, device)
 
         codebase_name = str(self.config.codebase['type'])
         backend_name = str(self.config.backend['type'])
         ir_name = str(self.config.ir['type'])
         with FUNCTION_REWRITER.context(
-            codebase=codebase_name,
-            backend=backend_name,
-            ir=ir_name,
-            config=self.config,
+                codebase=codebase_name,
+                backend=backend_name,
+                ir=ir_name,
+                config=self.config,
         ):
             ir_path = self.pipeline_manager.run(
                 'export_ir',
@@ -181,9 +185,8 @@ class CompilePipeline:
 
         quant_mode = str(self.config.quantization.get('mode', 'none')).lower()
         if quant_mode not in {'none', 'int8'}:
-            raise ConfigurationError(
-                f'Unsupported quantization mode: {quant_mode}. '
-                'Initial support is none or int8 Q/DQ.')
+            raise ConfigurationError(f'Unsupported quantization mode: {quant_mode}. '
+                                     'Initial support is none or int8 Q/DQ.')
         if self.config.precision == 'int8' and quant_mode != 'int8':
             raise ConfigurationError(
                 'Backend precision=int8 requires quantization.mode=int8.')
@@ -267,11 +270,9 @@ class CompilePipeline:
 
         bundle_files: Dict[str, str | Path] = {
             relative: source
-            for relative, source in zip(
-                backend_relative_files, backend_result.files)
+            for relative, source in zip(backend_relative_files, backend_result.files)
         }
-        bundle_files['build/resolved_config.json'] = (
-            work_dir / 'resolved_config.json')
+        bundle_files['build/resolved_config.json'] = (work_dir / 'resolved_config.json')
         if self.config.config_path is not None:
             bundle_files['build/deployment.py'] = self.config.config_path
         if bool(self.config.package.get('include_onnx', False)):
