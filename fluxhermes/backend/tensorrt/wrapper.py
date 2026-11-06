@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-from ...runtime.tensorrt import TensorRTEngine
+from ...errors import ConfigurationError
+from ...runtime.tensorrt import TensorRTEngine, _validate_target_metadata
 from ..base import BaseBackendWrapper
 
 
@@ -18,13 +19,17 @@ class TensorRTWrapper(BaseBackendWrapper):
         target_metadata: Optional[Mapping[str, Any]] = None,
         require_target_match: bool = False,
     ) -> None:
+        if type(require_target_match) is not bool:
+            raise ConfigurationError('require_target_match must be a boolean.')
+        if require_target_match:
+            _validate_target_metadata(target_metadata)
         self.engine = TensorRTEngine(
             engine_path,
             profile_index=profile_index,
             device=device,
+            target_metadata=target_metadata,
+            require_target_match=require_target_match,
         )
-        if require_target_match and target_metadata is not None:
-            self.engine._check_target(target_metadata)
 
     @property
     def input_names(self):

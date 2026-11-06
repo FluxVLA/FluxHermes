@@ -45,7 +45,7 @@ class DeploymentConfigTest(unittest.TestCase):
             },
             config_path=path,
         )
-        self.assertEqual(config.work_dir, Path('/tmp/work'))
+        self.assertEqual(config.work_dir, Path('/tmp/work').resolve())
 
     def test_rejects_unknown_precision(self):
         with self.assertRaises(ConfigurationError):
@@ -79,7 +79,8 @@ class DeploymentConfigTest(unittest.TestCase):
             config_path=Path('/tmp/configs/deploy.py'),
         )
         self.assertEqual(
-            config.tensorrt['timing_cache'], '/tmp/cache/model.timing')
+            config.tensorrt['timing_cache'],
+            str(Path('/tmp/cache/model.timing').resolve()))
 
 
 if __name__ == '__main__':
