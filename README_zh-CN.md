@@ -3,10 +3,10 @@
 FluxHermes 是 FluxVLA 的模型部署工具，用于将模型编译为 ONNX 和 TensorRT，
 支持部署优化、训练后量化、源模型与引擎的一致性验证，以及机器人部署包生成。
 
-> **当前状态：** 初始框架已经覆盖通用 FluxVLA 适配、TensorRT
-> FP32/FP16 构建、INT8 Q/DQ 量化、TensorRT 10/11 运行时、部署包
-> 校验、示例配置和无 GPU 单元测试。每个模型系列仍需要提供可导出的封装
-> 和代表性样本；真正上机前必须在目标 NVIDIA 设备上完成构建与验证。
+> **当前状态：** PI0.5 已接通独立 SDK、双图编译打包和多引擎运行时。
+> 此前 RTX 3090 / TensorRT 10.13.3.9 验证通过了小模型数值对齐，以及真实业务权重的
+> 原生 PyTorch 与 SDK 逐位对齐。但完整业务模型的 TensorRT 数值验证**失败**，
+> 最大绝对误差为 0.05605；目前不宣称业务模型可部署或已获得加速。
 
 ## 职责边界
 
@@ -61,7 +61,72 @@ python -m pip install -e '.[export,quantization,dev]'
 TensorRT 必须使用和目标 CUDA/JetPack 对应的 NVIDIA 发行版本，仓库不会自动
 安装一个可能与目标驱动不兼容的 TensorRT wheel。
 
-## 快速开始
+## PI0.5 独立导出
+
+构建机安装由 CI 固定源码提交构建的独立 SDK wheel；pip 只构建指定包子目录，
+不安装 FluxVLA 根目录的训练项目：
+
+```bash
+SDK_REVISION=55a464ae753f16dd19f444f63e321cea5535a6dc
+python -m pip install \
+  "fluxvla-export[test-onnx] @ git+https://github.com/ZaneZhang-67/FluxVLA.git@${SDK_REVISION}#subdirectory=packages/fluxvla-export" \
+  '.[export,onnxruntime,dev]'
+```
+
+`test-onnx` extra 固定已验证的导出依赖。仅在开发 SDK 时，才可选用相邻仓库的
+`../FluxVLA/packages/fluxvla-export[test-onnx]` 安装方式；运行部署包不要求源码目录。
+
+训练侧调用 SDK 的 `produce_pi05_artifacts`，提供部署 JSON、已预处理的六个
+具名 tensor（包括固定 noise）以及原始 safetensors checkpoint。存储 dtype 默认为
+FP32，也支持显式声明的 BF16 存储。SDK 校验后将权重载入 FP32 模型参数，与普通
+PyTorch 对同一 checkpoint 的加载语义一致；BF16 存储与 BF16 autocast 计算是不同选择。
+原始 checkpoint 文件不重写。预处理来源必须显式提供；Hermes 不复制模型实现，
+不重建训练配置，也不实现 checkpoint 加载器。
+
+```bash
+export PI05_DEPLOYMENT_JSON=/path/to/export-case/export_config.json
+export PI05_CHECKPOINT=/path/to/model.safetensors
+export PI05_EXPORT_INPUTS=/path/to/export-case/export_inputs.safetensors
+
+fluxhermes compile configs/pi05/pi05_export_fp32.py --execute
+fluxhermes run artifacts/pi05-export-fp32 --inputs "$PI05_EXPORT_INPUTS" \
+  --device cuda:0 --output /tmp/actions.npz
+fluxhermes benchmark artifacts/pi05-export-fp32 --inputs "$PI05_EXPORT_INPUTS" \
+  --device cuda:0 --warmup 10 --repeats 100 \
+  --reference-config configs/pi05/pi05_export_fp32.py
+```
+
+配方自动选择 FP32 legacy/opset18 或 BF16 Dynamo/opset22（`optimize=True`）。标准
+优化器将常量 reduction axes 固化为 TensorRT 要求的 initializer。这里的后端
+`precision=fp32` 表示关闭全图降精，保留模型的显式 BF16 和 FP32 保护路径；
+TensorRT 使用强类型并关闭 TF32。此配方暂不支持 FP16 转换、INT8、RTC 或动态 fixture。
+双图与完整 Euler actions 都通过校验后，机器人运行时才接受 bundle。
+
+CLI 支持 NPZ 和 safetensors。基准计时覆盖输入已在设备上的同步策略推理，不含读文件、
+加载引擎和 H2D。加上 `--reference-config` 后，先核对同一配置、checkpoint 和输入，
+计时 PyTorch 并释放模型，再加载引擎；数值对齐通过才输出实测比值，小于 1 就是变慢。
+每次构建使用新的 work/bundle 路径，不会自动删除已有部署包或 staging 目录。
+CPU `onnxruntime` 后端拒绝 BF16，不能代替 TensorRT 验证。
+
+```bash
+python -m unittest discover -s test -v
+python -m unittest discover -s test_integration -v
+# 目标机真实 GPU 检查；缺 CUDA/TensorRT 会报错，不会跳过后显示成功。
+FLUXHERMES_CUDA_DEVICE=cuda:0 python -m unittest discover -s test_gpu -v
+```
+
+### 验证边界
+
+以上 NVIDIA 结果来自 2026-11-05，并非本次发布重新运行。真实业务 BF16 存储权重的
+原生 PyTorch 与 SDK 逐位一致；双图 ONNX 导出、TensorRT 构建也通过了。但完整
+TensorRT 数值验证在固定 `atol=0.02`、`rtol=0.02`、余弦 `0.999` 门限下失败。
+引擎能构建不等于策略通过验证，不应放宽门限或绕过验证来部署失败产物。
+
+3.62B 参数模型使用分阶段 harness 完成实验，普通完整 `CompilePipeline` 的内存
+可行性仍未证实。仓库的两个 GPU 测试文件检查 Add 图运行时、stream/profile 和
+日志/JSON 行为，不等同于独立的小策略或业务模型 GPU 验证。
+
+## 旧版训练环境适配入口
 
 先做 dry-run；此命令不会加载 checkpoint，也不会调用 GPU：
 
@@ -89,7 +154,20 @@ fluxhermes compile configs/pi05/pi05_aloha_int8.py --execute
 
 ## 真机运行
 
-运行时默认拒绝加载未通过源模型/TensorRT 一致性校验的 bundle：
+运行时默认拒绝加载未通过源模型/TensorRT 一致性校验的 bundle。独立 SDK 部署包
+仍需安装 SDK executor 包和后端，但不需要训练目录、模型构造、原始权重或导出 JSON。
+TensorRT 使用目标 CUDA 对应的 NVIDIA 发行版；运行时依赖可单独安装：
+
+```bash
+SDK_REVISION=55a464ae753f16dd19f444f63e321cea5535a6dc
+python -m pip install \
+  "fluxvla-export @ git+https://github.com/ZaneZhang-67/FluxVLA.git@${SDK_REVISION}#subdirectory=packages/fluxvla-export" \
+  '.[runtime]' 'safetensors>=0.4,<1'
+```
+
+CLI `run`/`benchmark` 需要 Torch；safetensors 输入还需要上面的 `safetensors` 包，
+NPZ 使用基础 NumPy 依赖。独立进程测试会检查未导入模型/训练模块；这与环境中是否
+安装了这些包是两回事。
 
 ```python
 from fluxhermes.runtime import RobotPolicy
@@ -137,7 +215,7 @@ work_dirs/               中间文件和构建缓存（默认不纳入 Git）
 ```bash
 python -m unittest discover -s test -v
 pytest
-flake8 fluxhermes test scripts
+flake8 fluxhermes test scripts test_integration test_gpu
 ```
 
 ## License
