@@ -30,9 +30,8 @@ def verify_bundle(bundle_dir: str | Path) -> BundleManifest:
         path for path in manifest.backend_files if path not in manifest.files
     ]
     if unchecked_backend_files:
-        raise ArtifactError(
-            'Backend files are not covered by bundle checksums: '
-            f'{unchecked_backend_files}')
+        raise ArtifactError('Backend files are not covered by bundle checksums: '
+                            f'{unchecked_backend_files}')
     for relative, expected in manifest.files.items():
         path = (root / relative).resolve()
         try:
@@ -49,16 +48,27 @@ def verify_bundle(bundle_dir: str | Path) -> BundleManifest:
     return manifest
 
 
-def create_bundle(
-    output_dir: str | Path,
-    manifest: BundleManifest,
-    files: Dict[str, str | Path],
-    assets: Iterable[str | Path] = (),
-) -> Path:
-    root = Path(output_dir).expanduser().resolve()
+def validate_bundle_destination(output_dir: str | Path) -> tuple[Path, Path]:
+    """Reject existing user data; compile and packaging share this preflight."""
+    requested = Path(output_dir).expanduser()
+    root = requested.resolve()
+    if root.exists() or requested.is_symlink():
+        raise ArtifactError(
+            f'Bundle output must be a new path; refusing to replace {root}.')
     staging = root.with_name(root.name + '.staging')
-    if staging.exists():
-        shutil.rmtree(staging)
+    if staging.exists() or staging.is_symlink():
+        raise ArtifactError(
+            f'Bundle staging path already exists; refusing to remove {staging}.')
+    return root, staging
+
+
+def create_bundle(
+        output_dir: str | Path,
+        manifest: BundleManifest,
+        files: Dict[str, str | Path],
+        assets: Iterable[str | Path] = (),
+) -> Path:
+    root, staging = validate_bundle_destination(output_dir)
     staging.mkdir(parents=True)
     checksums: Dict[str, str] = {}
     for relative, raw_source in files.items():
@@ -92,8 +102,9 @@ def create_bundle(
     manifest_data = manifest.to_dict()
     manifest_data['files'] = checksums
     write_json(staging / MANIFEST_NAME, manifest_data)
-    if root.exists():
-        shutil.rmtree(root)
+    if root.exists() or root.is_symlink():
+        raise ArtifactError(
+            f'Bundle output appeared during staging; refusing to replace {root}.')
     staging.rename(root)
     verify_bundle(root)
     return root

@@ -16,11 +16,11 @@ def manifest():
         created_at=datetime.now(timezone.utc).isoformat(),
         backend='tensorrt',
         precision='fp16',
-        backend_files=('backend/model.plan',),
+        backend_files=('backend/model.plan', ),
         backend_metadata={'tensorrt_version': '10.0'},
         source={},
-        inputs=(TensorSpec(name='x', dtype='float32', shape=(1, 2)),),
-        outputs=(TensorSpec(name='y', dtype='float32', shape=(1, 2)),),
+        inputs=(TensorSpec(name='x', dtype='float32', shape=(1, 2)), ),
+        outputs=(TensorSpec(name='y', dtype='float32', shape=(1, 2)), ),
         runtime={'action_output': 'y'},
         validation={'passed': True},
         files={},
@@ -74,6 +74,29 @@ class BundleTest(unittest.TestCase):
                     {'../outside.plan': engine},
                 )
 
+    def test_existing_output_and_staging_are_never_deleted(self):
+        for name in ('bundle', 'bundle.staging'):
+            with self.subTest(path=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                existing = root / name
+                existing.mkdir()
+                sentinel = existing / 'user-data.txt'
+                sentinel.write_text('keep this data', encoding='utf-8')
+                with self.assertRaisesRegex(ArtifactError, 'refusing'):
+                    create_bundle(root / 'bundle', manifest(), {})
+                self.assertEqual(sentinel.read_text(), 'keep this data')
+
+    def test_dangling_output_symlink_is_not_followed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'unrelated-path'
+            output = root / 'bundle'
+            output.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(ArtifactError, 'refusing'):
+                create_bundle(output, manifest(), {})
+            self.assertTrue(output.is_symlink())
+            self.assertFalse(target.exists())
+
     def test_reads_legacy_single_engine_manifest(self):
         value = manifest().to_dict()
         value['schema_version'] = 1
@@ -84,7 +107,7 @@ class BundleTest(unittest.TestCase):
         value.pop('backend_files')
         value.pop('backend_metadata')
         loaded = BundleManifest.from_dict(value)
-        self.assertEqual(loaded.backend_files, ('backend/model.plan',))
+        self.assertEqual(loaded.backend_files, ('backend/model.plan', ))
 
     def test_rejects_backend_file_without_checksum(self):
         with tempfile.TemporaryDirectory() as directory:

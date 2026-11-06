@@ -3,6 +3,7 @@ from .base import (BACKENDS, BackendBuildResult, BaseBackendManager, BaseBackend
 
 
 def register_builtin_backends() -> None:
+    from .onnxruntime import ONNXRuntimeBackendManager  # noqa: F401
     from .tensorrt import TensorRTBackendManager  # noqa: F401
 
 
