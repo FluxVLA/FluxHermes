@@ -124,9 +124,13 @@ class DeploymentConfig:
         ir = cls._normalize_ir(data)
         default_precision = 'fp16' if backend.get('type') == 'tensorrt' else 'fp32'
         precision = str(backend.get('precision', default_precision))
-        if backend.get('type') == 'tensorrt' and precision not in {
-                'fp32', 'fp16', 'int8'}:
-            raise ConfigurationError(f'Unsupported TensorRT precision: {precision}')
+        if backend.get('type') == 'tensorrt':
+            if precision not in {'fp32', 'fp16', 'bf16', 'int8'}:
+                raise ConfigurationError(f'Unsupported TensorRT precision: {precision}')
+            if precision == 'bf16' and backend.get('strongly_typed') is False:
+                raise ConfigurationError('TensorRT bf16 requires strongly_typed=True.')
+            if 'allow_tf32' in backend and type(backend['allow_tf32']) is not bool:
+                raise ConfigurationError('TensorRT allow_tf32 must be true or false.')
         timing_cache = backend.get('timing_cache')
         if timing_cache and config_path is not None:
             timing_path = Path(str(timing_cache)).expanduser()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from collections import OrderedDict
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping
 
@@ -18,6 +19,12 @@ class FluxVLAAdapter(ModelAdapter):
     FluxHermes. Representative graph inputs come from an NPZ file or a Python
     sample factory, and ``bindings`` describes how flat engine inputs are
     reconstructed into ``predict_action`` keyword arguments.
+
+    ``parameter_dtype`` optionally casts the constructed model BEFORE loading
+    weights, avoiding a checkpoint round-trip through lower-precision parameters.
+    ``autocast_dtype`` optionally selects float16/bfloat16 computation; explicit
+    None disables autocast. Omitted fields preserve construction/caller defaults.
+    Select both from the actual source runner, not the backend precision label.
     """
 
     def __init__(self, source: Dict[str, Any], deployment: Any) -> None:
@@ -52,8 +59,21 @@ class FluxVLAAdapter(ModelAdapter):
                 f'{error}') from error
         return root, torch, Config, build_vla_from_cfg
 
+    def _precision_dtypes(self, torch: Any):
+        dtypes = []
+        for field, allowed in (
+                ('parameter_dtype', (None, 'float32', 'float16', 'bfloat16')),
+                ('autocast_dtype', (None, 'float16', 'bfloat16'))):
+            value = self.source.get(field)
+            if value not in allowed:
+                raise ConfigurationError(
+                    f'source.{field} must be one of {allowed}, got {value!r}.')
+            dtypes.append(None if value is None else getattr(torch, value))
+        return tuple(dtypes)
+
     def _load_model(self, device: str):
         root, torch, Config, build_vla_from_cfg = self._import_stack()
+        parameter_dtype, _ = self._precision_dtypes(torch)
         config_path = Path(self.source.get('config', '')).expanduser()
         if not config_path.is_absolute():
             config_path = root / config_path
@@ -65,6 +85,8 @@ class FluxVLAAdapter(ModelAdapter):
             raise ConfigurationError(
                 f'FluxVLA config has no model section named {section!r}.')
         model = build_vla_from_cfg(getattr(cfg, section))
+        if parameter_dtype is not None:
+            model.to(dtype=parameter_dtype)
         checkpoint = Path(self.source.get('checkpoint', '')).expanduser()
         if not checkpoint.is_absolute():
             checkpoint = root / checkpoint
@@ -137,7 +159,10 @@ class FluxVLAAdapter(ModelAdapter):
                                 torch.from_numpy(archive[spec.name]).to(device))
                                for spec in self.deployment.inputs)
 
-    def _make_wrapper(self, model: Any, torch: Any) -> Any:
+    def _make_wrapper(self, model: Any, torch: Any, device: str = 'cpu') -> Any:
+        _, autocast_dtype = self._precision_dtypes(torch)
+        explicit_autocast = 'autocast_dtype' in self.source
+        device_type = torch.device(device).type
         input_names = tuple(spec.name for spec in self.deployment.inputs)
         output_names = tuple(spec.name for spec in self.deployment.outputs)
         bindings = dict(self.source.get('bindings', {}))
@@ -167,7 +192,16 @@ class FluxVLAAdapter(ModelAdapter):
                     else:
                         raise TypeError(
                             f'Unsupported binding for {argument}: {binding!r}')
-                result = self.wrapped_model.predict_action(**kwargs)
+                # Native PI0/PI05 Euler updates noise in place. Keep the supplied
+                # fixture identical across reference, export and repeated calls.
+                if torch.is_tensor(kwargs.get('noise')):
+                    kwargs['noise'] = kwargs['noise'].clone()
+                context = (torch.autocast(
+                    device_type, dtype=autocast_dtype,
+                    enabled=autocast_dtype is not None)
+                    if explicit_autocast else nullcontext())
+                with context:
+                    result = self.wrapped_model.predict_action(**kwargs)
                 if isinstance(result, dict):
                     values_out = tuple(result[name] for name in output_names)
                     return values_out[0] if len(values_out) == 1 else values_out
@@ -227,7 +261,7 @@ class FluxVLAAdapter(ModelAdapter):
             if axes:
                 dynamic_axes[spec.name] = axes
         return PreparedModel(
-            module=self._make_wrapper(model, torch),
+            module=self._make_wrapper(model, torch, device),
             inputs=inputs,
             output_names=tuple(spec.name for spec in self.deployment.outputs),
             dynamic_axes=dynamic_axes,
@@ -237,5 +271,8 @@ class FluxVLAAdapter(ModelAdapter):
                 'config': str(self.source.get('config')),
                 'checkpoint': str(checkpoint),
                 'model_section': str(self.source.get('model_section', 'model')),
+                **{key: self.source[key]
+                   for key in ('parameter_dtype', 'autocast_dtype')
+                   if key in self.source},
             },
         )

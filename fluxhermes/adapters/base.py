@@ -16,10 +16,21 @@ class PreparedModel:
     calibration_source: Optional[Callable[[], Iterable[Mapping[str, Any]]]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def run_reference(self) -> Dict[str, Any]:
-        values = tuple(self.inputs[name] for name in self.inputs)
-        result = self.module(*values)
-        if isinstance(result, dict):
+    # Source inference may intentionally differ from the export graph (e.g. FA2).
+    reference_runner: Optional[Callable[[Mapping[str, Any]], Any]] = None
+
+    def run_reference(
+        self, inputs: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        inputs = self.inputs if inputs is None else inputs
+        if set(inputs) != set(self.inputs):
+            raise ValueError('Reference input names differ from prepared inputs.')
+        if self.reference_runner is not None:
+            result = self.reference_runner(inputs)
+        else:
+            values = tuple(inputs[name] for name in self.inputs)
+            result = self.module(*values)
+        if isinstance(result, Mapping):
             return {name: result[name] for name in self.output_names}
         if len(self.output_names) == 1 and not isinstance(result, (list, tuple)):
             return {self.output_names[0]: result}

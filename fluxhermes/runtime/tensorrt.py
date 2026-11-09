@@ -44,7 +44,12 @@ class TensorRTEngine:
             raise ArtifactError('Could not create TensorRT execution context.')
         self.profile_index = int(profile_index)
         if self.engine.num_optimization_profiles > 0:
-            self.context.active_optimization_profile = self.profile_index
+            if not 0 <= self.profile_index < self.engine.num_optimization_profiles:
+                raise ValueError(f'Invalid TensorRT profile: {self.profile_index}')
+            stream = torch.cuda.current_stream(self.device)
+            if not self.context.set_optimization_profile_async(
+                    self.profile_index, stream.cuda_stream):
+                raise ArtifactError('Could not select TensorRT optimization profile.')
         self.input_names = []
         self.output_names = []
         for index in range(self.engine.num_io_tensors):

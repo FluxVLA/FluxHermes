@@ -129,14 +129,62 @@ class CompilePipeline:
                 'processor that declares graph_is_explicitly_typed=True.')
 
     def execute(self) -> Path:
-        work_dir = self.config.work_dir
-        work_dir.mkdir(parents=True, exist_ok=True)
-        write_json(work_dir / 'resolved_config.json', self.config.to_dict())
-        self._validate_precision_configuration()
+        from uuid import uuid4
+        self._run_id = uuid4().hex
+        self._validation_result = None
+        self.pipeline_manager.records.clear()
+        write_json(self.config.work_dir / 'result.json', {
+            'run_id': self._run_id, 'status': 'running',
+            'workflow_completed': False, 'numerical_passed': None,
+        })
+        try:
+            return self._execute()
+        except Exception as error:
+            validation = getattr(error, 'report', self._validation_result)
+            result = {
+                'run_id': self._run_id, 'status': 'failed',
+                'workflow_completed': False,
+                'numerical_passed': (
+                    validation.get('passed') if isinstance(validation, dict) else None),
+                'error': {'type': type(error).__name__, 'message': str(error)},
+                'validation': validation,
+                'stages': self.pipeline_manager.report(),
+            }
+            write_json(self.config.work_dir / 'failure.json', result)
+            write_json(self.config.work_dir / 'result.json', result)
+            raise
 
-        device = str(
-            self.config.codebase.get(
-                'device', self.config.source.get('device', 'cuda:0')))
+    def _record_validation(self, *args):
+        self._validation_result = validate_backend(*args)
+        return self._validation_result
+
+    def _export_in_subprocess(self):
+        import subprocess
+        import sys
+        from .core.pipeline_manager import StageRecord
+        report_path = self.config.work_dir / 'export-stage.json'
+        process = subprocess.run([
+            sys.executable, '-B', '-m', 'fluxhermes.export_worker',
+            str(self.config.work_dir / 'resolved_config.json'), self._run_id,
+        ], check=False)
+        if not report_path.is_file():
+            raise ConfigurationError(
+                f'Export worker exited {process.returncode} without its stage report.')
+        state = json.loads(report_path.read_text(encoding='utf-8'))
+        if state['run_id'] != self._run_id:
+            raise ConfigurationError('Export worker report belongs to a different run.')
+        self.pipeline_manager.records.extend(
+            StageRecord(**record) for record in state['stages'])
+        if process.returncode != 0 or not state['passed']:
+            raise ConfigurationError(
+                f'Export worker failed ({process.returncode}): {state.get("error")}')
+        if not Path(state['graph_path']).resolve().is_relative_to(
+                self.config.work_dir.resolve()):
+            raise ConfigurationError('Export worker graph escaped its work directory.')
+        return state
+
+    def _prepare_ir(self, device):
+        work_dir = self.config.work_dir
         task_processor = self.pipeline_manager.run(
             'build_task_processor',
             build_task_processor,
@@ -200,6 +248,28 @@ class CompilePipeline:
                 self.config.quantization,
             )
 
+        return task_processor, prepared, graph_path
+
+    def _execute(self) -> Path:
+        work_dir = self.config.work_dir
+        work_dir.mkdir(parents=True, exist_ok=True)
+        write_json(work_dir / 'resolved_config.json', self.config.to_dict())
+        self._validate_precision_configuration()
+
+        device = str(
+            self.config.codebase.get(
+                'device', self.config.source.get('device', 'cuda:0')))
+        isolated = self.config.codebase.get('isolate_export', False)
+        if type(isolated) is not bool:
+            raise ConfigurationError('isolate_export must be true or false.')
+        if isolated:
+            export_state = self._export_in_subprocess()
+            graph_path = Path(export_state['graph_path'])
+            prepared = task_processor = None
+        else:
+            task_processor, prepared, graph_path = self._prepare_ir(device)
+        backend_name = str(self.config.backend['type'])
+
         backend_manager = get_backend_manager(backend_name)
         backend_result = self.pipeline_manager.run(
             'build_backend',
@@ -210,6 +280,16 @@ class CompilePipeline:
         )
 
         if bool(self.config.validation.get('enabled', True)):
+            if isolated:
+                task_processor = self.pipeline_manager.run(
+                    'build_reference_task_processor', build_task_processor,
+                    self.config, device)
+                prepared = self.pipeline_manager.run(
+                    'prepare_model', task_processor.prepare_model,
+                    metadata={'role': 'reference_reload'})
+                from .validation.parity import _load_sample
+                prepared.inputs, _ = _load_sample(
+                    work_dir / 'export-inputs.npz', prepared.inputs)
             wrapper = backend_manager.build_wrapper(
                 backend_result.files,
                 device=device,
@@ -217,7 +297,7 @@ class CompilePipeline:
             )
             validation = self.pipeline_manager.run(
                 'validate',
-                validate_backend,
+                self._record_validation,
                 prepared,
                 wrapper,
                 self.config.validation,
@@ -230,8 +310,12 @@ class CompilePipeline:
                 'reason': 'validation was disabled',
             }
 
-        source_metadata = dict(prepared.metadata)
-        source_metadata.update(task_processor.runtime_metadata())
+        self._validation_result = validation
+        if isolated:
+            source_metadata = dict(export_state['source_metadata'])
+        else:
+            source_metadata = dict(prepared.metadata)
+            source_metadata.update(task_processor.runtime_metadata())
         if self.config.config_path is not None:
             source_metadata['deployment_config_sha256'] = sha256_file(
                 self.config.config_path)
@@ -294,6 +378,9 @@ class CompilePipeline:
             json.dumps(
                 {
                     'bundle': str(bundle),
+                    'run_id': self._run_id, 'status': 'completed',
+                    'workflow_completed': True,
+                    'numerical_passed': bool(validation.get('passed', False)),
                     'pipeline': self.pipeline_manager.report(),
                 },
                 indent=2,
