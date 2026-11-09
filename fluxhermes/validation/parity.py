@@ -42,17 +42,29 @@ def compare_outputs(
 
     def structural_error(message, **details):
         error = ValidationError(message)
-        error.report = {'passed': False, 'outputs': metrics, 'error': {
-            'type': 'ValidationError', 'message': message, **details}}
+        error.report = {
+            'passed': False,
+            'outputs': metrics,
+            'error': {
+                'type': 'ValidationError',
+                'message': message,
+                **details
+            }
+        }
         raise error
 
-    if not (np.isfinite([atol, rtol, min_cosine_similarity]).all()
-            and atol >= 0 and rtol >= 0 and -1 <= min_cosine_similarity <= 1):
-        structural_error('Parity thresholds must be finite; tolerances nonnegative; cosine in [-1,1].')
+    if not (np.isfinite([atol, rtol, min_cosine_similarity]).all() and atol >= 0
+            and rtol >= 0 and -1 <= min_cosine_similarity <= 1):
+        structural_error(
+            'Parity thresholds must be finite; tolerances nonnegative; '
+            'cosine in [-1,1].'
+        )
     if not reference or set(reference) != set(candidate):
         structural_error(
-            f'Output names differ or are empty: {sorted(reference)} != {sorted(candidate)}',
-            expected_names=sorted(reference), actual_names=sorted(candidate))
+            f'Output names differ or are empty: '
+            f'{sorted(reference)} != {sorted(candidate)}',
+            expected_names=sorted(reference),
+            actual_names=sorted(candidate))
     passed = True
     for name in reference:
         expected = _numpy(reference[name])
@@ -60,11 +72,18 @@ def compare_outputs(
         if expected.shape != actual.shape:
             structural_error(
                 f'{name}: shape differs: {expected.shape} != {actual.shape}',
-                output=name, expected_shape=list(expected.shape), actual_shape=list(actual.shape))
+                output=name,
+                expected_shape=list(expected.shape),
+                actual_shape=list(actual.shape))
         if not (np.isfinite(expected).all() and np.isfinite(actual).all()):
-            metrics[name] = dict(shape=list(expected.shape), max_abs_error=None,
-                                 max_rel_error=None, cosine_similarity=None,
-                                 finite=False, passed=False, reason='non-finite reference or candidate')
+            metrics[name] = dict(
+                shape=list(expected.shape),
+                max_abs_error=None,
+                max_rel_error=None,
+                cosine_similarity=None,
+                finite=False,
+                passed=False,
+                reason='non-finite reference or candidate')
             passed = False
             continue
         delta = np.abs(expected - actual)
@@ -73,11 +92,10 @@ def compare_outputs(
         max_rel = float((delta / scale).max(initial=0.0))
         flat_expected = expected.reshape(-1)
         flat_actual = actual.reshape(-1)
-        denominator = float(
-            np.linalg.norm(flat_expected) * np.linalg.norm(flat_actual))
+        denominator = float(np.linalg.norm(flat_expected) * np.linalg.norm(flat_actual))
         cosine = (
-            float(np.dot(flat_expected, flat_actual) / denominator)
-            if denominator > 0 else 1.0)
+            float(np.dot(flat_expected, flat_actual) /
+                  denominator) if denominator > 0 else 1.0)
         finite = bool(np.isfinite(actual).all())
         close = bool(np.allclose(expected, actual, atol=atol, rtol=rtol))
         tensor_passed = finite and close and cosine >= min_cosine_similarity
@@ -117,8 +135,13 @@ def validate_backend(
         return _validate_backend(prepared, backend, options)
     except Exception as error:
         if not hasattr(error, 'report'):
-            error.report = {'passed': False, 'error': {
-                'type': type(error).__name__, 'message': str(error)}}
+            error.report = {
+                'passed': False,
+                'error': {
+                    'type': type(error).__name__,
+                    'message': str(error)
+                }
+            }
         raise
 
 
@@ -130,8 +153,7 @@ def _validate_backend(prepared, backend, options):
     thresholds = {
         'atol': float(options.get('atol', 1e-2)),
         'rtol': float(options.get('rtol', 1e-2)),
-        'min_cosine_similarity': float(
-            options.get('min_cosine_similarity', 0.995)),
+        'min_cosine_similarity': float(options.get('min_cosine_similarity', 0.995)),
     }
 
     def compare_sample(inputs):
@@ -165,9 +187,12 @@ def _validate_backend(prepared, backend, options):
             except Exception as error:
                 # Runtime failures are never numerical failures or skipped cases.
                 # Preserve the actual exception and the completed report prefix.
-                entry.update(passed=False, error={
-                    'type': type(error).__name__, 'message': str(error),
-                })
+                entry.update(
+                    passed=False,
+                    error={
+                        'type': type(error).__name__,
+                        'message': str(error),
+                    })
                 result['samples'].append(entry)
                 result['passed'] = False
                 error.report = result

@@ -9,13 +9,12 @@ from ..errors import ConfigurationError
 from ..plugins import add_python_paths
 from .base import PreparedModel
 
-
 _CONTRACT = (
     ('images', 'float32', (1, 512, 1536)),
     ('lang_tokens', 'int64', (1, -1)),
     ('position_ids', 'int64', (3, 1, -1)),
     ('states', 'float32', (1, 1, 132)),
-    ('embodiment_ids', 'int32', (1,)),
+    ('embodiment_ids', 'int32', (1, )),
     ('noise', 'float32', (1, 40, 132)),
 )
 _NAMES = tuple(item[0] for item in _CONTRACT)
@@ -26,19 +25,19 @@ def _check_specs(deployment):
     if tuple(s.name for s in specs) != _NAMES:
         raise ConfigurationError(f'N1.7 input order must be {_NAMES}.')
     for spec, (name, dtype, shape) in zip(specs, _CONTRACT):
-        expected = TensorSpec(name, dtype, shape, spec.min_shape,
-                              spec.opt_shape, spec.max_shape)
+        expected = TensorSpec(name, dtype, shape, spec.min_shape, spec.opt_shape,
+                              spec.max_shape)
         if spec.dtype != expected.dtype or spec.shape != expected.shape:
             raise ConfigurationError(f'{name}: expected {dtype} {shape}.')
         for profile in (spec.min_shape, spec.opt_shape, spec.max_shape):
-            if profile is not None and any(
-                    d < 1 or (s != -1 and s != d)
-                    for s, d in zip(shape, profile)):
+            if profile is not None and any(d < 1 or (s != -1 and s != d)
+                                           for s, d in zip(shape, profile)):
                 raise ConfigurationError(f'{name}: invalid fixed geometry/profile.')
     tokens, positions = specs[1], specs[2]
     for field in ('min_shape', 'opt_shape', 'max_shape'):
         if getattr(tokens, field)[1] != getattr(positions, field)[2]:
-            raise ConfigurationError('lang_tokens and position_ids profiles must share L.')
+            raise ConfigurationError(
+                'lang_tokens and position_ids profiles must share L.')
     if (tokens.min_shape[1] < 138 or tokens.max_shape[1] > 180):
         raise ConfigurationError('N1.7 supported trimmed length range is 138..180.')
     if len(deployment.outputs) != 1 or deployment.outputs[0] != TensorSpec(
@@ -56,13 +55,17 @@ def _check_inputs(inputs, specs):
         dtype = str(value.dtype).removeprefix('torch.')
         shape = tuple(value.shape)
         if dtype != spec.dtype or len(shape) != len(spec.shape):
-            raise ConfigurationError(f'{spec.name}: expected {spec.dtype} rank {len(spec.shape)}.')
+            raise ConfigurationError(
+                f'{spec.name}: expected {spec.dtype} rank {len(spec.shape)}.')
         for i, (actual, expected) in enumerate(zip(shape, spec.shape)):
             if (expected != -1 and actual != expected) or (
-                    expected == -1 and not spec.min_shape[i] <= actual <= spec.max_shape[i]):
-                raise ConfigurationError(f'{spec.name}: shape {shape} outside contract.')
-        finite = (value.isfinite().all().item() if hasattr(value, 'isfinite')
-                  else np.isfinite(value).all())
+                    expected == -1
+                    and not spec.min_shape[i] <= actual <= spec.max_shape[i]):
+                raise ConfigurationError(
+                    f'{spec.name}: shape {shape} outside contract.')
+        finite = (
+            value.isfinite().all().item()
+            if hasattr(value, 'isfinite') else np.isfinite(value).all())
         if not finite:
             raise ConfigurationError(f'{spec.name}: non-finite values.')
     if inputs['lang_tokens'].shape[1] != inputs['position_ids'].shape[2]:
@@ -89,15 +92,18 @@ def _set_attention(vlm, mode):
 
 
 def _make_wrapper(model, torch):
+
     class Boundary(torch.nn.Module):
+
         def __init__(self):
             super().__init__()
             self.model = model
-            self.register_buffer('image_grid_thw', torch.tensor(
-                [[[1, 16, 16], [1, 16, 16]]], dtype=torch.int64))
+            self.register_buffer(
+                'image_grid_thw',
+                torch.tensor([[[1, 16, 16], [1, 16, 16]]], dtype=torch.int64))
 
-        def forward(self, images, lang_tokens, position_ids, states,
-                    embodiment_ids, noise):
+        def forward(self, images, lang_tokens, position_ids, states, embodiment_ids,
+                    noise):
             vlm, head = self.model.vlm_backbone.vlm, self.model.vla_head
             had_local = '_sample_initial_actions' in head.__dict__
             previous = head.__dict__.get('_sample_initial_actions')
@@ -112,7 +118,8 @@ def _make_wrapper(model, torch):
                 head._sample_initial_actions = lambda *args, **kwargs: noise.clone()
                 with torch.autocast(images.device.type, dtype=torch.bfloat16):
                     return self.model.predict_action(
-                        images=images, lang_tokens=lang_tokens,
+                        images=images,
+                        lang_tokens=lang_tokens,
                         lang_masks=torch.ones_like(lang_tokens),
                         image_grid_thw=self.image_grid_thw,
                         states=states.to(torch.bfloat16),
@@ -128,6 +135,7 @@ def _make_wrapper(model, torch):
 
 
 def _reference_runner(wrapper, specs, torch):
+
     def run(inputs):
         _check_inputs(inputs, specs)
         vlm = wrapper.model.vlm_backbone.vlm
@@ -137,11 +145,12 @@ def _reference_runner(wrapper, specs, torch):
                 return wrapper(*(inputs[name] for name in _NAMES))
         finally:
             _set_attention(vlm, 'sdpa')
+
     return run
 
 
-def prepare_groot_n17(*, deployment, device, fluxvla_root, config,
-                      checkpoint, sample_inputs):
+def prepare_groot_n17(*, deployment, device, fluxvla_root, config, checkpoint,
+                      sample_inputs):
     """Single shared CUDA BF16 model; factory kwargs are intentionally closed.
 
     NPZ is prepared externally using the original backbone's
@@ -172,8 +181,8 @@ def prepare_groot_n17(*, deployment, device, fluxvla_root, config,
         inputs = {name: archive[name] for name in archive.files}
     _check_inputs(inputs, specs)
     add_python_paths([str(root)])
-    from mmengine.config import Config
     from fluxvla.engines import build_vla_from_cfg
+    from mmengine.config import Config
     cfg = Config.fromfile(str(config_path))
     model_cfg = copy.deepcopy(cfg.model)
     model_cfg['model_path'] = str(checkpoint_path)
@@ -187,18 +196,35 @@ def prepare_groot_n17(*, deployment, device, fluxvla_root, config,
     wrapper = _make_wrapper(model, torch).to(device)
     inputs = {name: torch.from_numpy(inputs[name]).to(device) for name in _NAMES}
     return PreparedModel(
-        module=wrapper, inputs=inputs, output_names=('actions',),
-        dynamic_axes={'lang_tokens': {1: 'sequence_length'},
-                      'position_ids': {2: 'sequence_length'}},
+        module=wrapper,
+        inputs=inputs,
+        output_names=('actions', ),
+        dynamic_axes={
+            'lang_tokens': {
+                1: 'sequence_length'
+            },
+            'position_ids': {
+                2: 'sequence_length'
+            }
+        },
         reference_runner=_reference_runner(wrapper, specs, torch),
         metadata=dict(
-            adapter='groot_n17', fluxvla_root=str(root), config=str(config_path),
-            checkpoint=str(checkpoint_path), sample_inputs=str(sample_path),
-            implementation='Config.fromfile -> build_vla_from_cfg -> model.from_pretrained',
-            host_boundary='Original _trim_common_left_padding + get_rope_index in external samples',
+            adapter='groot_n17',
+            fluxvla_root=str(root),
+            config=str(config_path),
+            checkpoint=str(checkpoint_path),
+            sample_inputs=str(sample_path),
+            implementation=(
+                'Config.fromfile -> build_vla_from_cfg -> model.from_pretrained'),
+            host_boundary=(
+                'Original _trim_common_left_padding + '
+                'get_rope_index in external samples'),
             static_image_grid_thw=[[1, 16, 16], [1, 16, 16]],
-            image_geometry=[1, 512, 1536], batch_size=1,
+            image_geometry=[1, 512, 1536],
+            batch_size=1,
             dynamic_length=[specs[1].min_shape[1], specs[1].max_shape[1]],
-            reference_attention='flash_attention_2', export_attention='sdpa',
-            attention_modules=attention_modules, attention_switch_gpu_parity='pending',
+            reference_attention='flash_attention_2',
+            export_attention='sdpa',
+            attention_modules=attention_modules,
+            attention_switch_gpu_parity='pending',
             postprocessing='Original predict_action only; no new mathematics'))

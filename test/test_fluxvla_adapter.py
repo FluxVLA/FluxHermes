@@ -51,9 +51,13 @@ class FluxVLAAdapterTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.document = {
-            'model': {'openpi_fp32_flow': False},
-            'runner': {'enable_mixed_precision_training': True,
-                       'mixed_precision_dtype': 'bf16'},
+            'model': {
+                'openpi_fp32_flow': False
+            },
+            'runner': {
+                'enable_mixed_precision_training': True,
+                'mixed_precision_dtype': 'bf16'
+            },
         }
         (self.root / 'training.json').write_text(json.dumps(self.document))
         self.weights = {
@@ -63,14 +67,28 @@ class FluxVLAAdapterTest(unittest.TestCase):
         }
         save_file(self.weights, self.root / 'model.safetensors')
         self.source = {
-            'type': 'fluxvla', 'fluxvla_root': str(self.root),
-            'config': 'training.json', 'checkpoint': 'model.safetensors',
+            'type': 'fluxvla',
+            'fluxvla_root': str(self.root),
+            'config': 'training.json',
+            'checkpoint': 'model.safetensors',
         }
         self.deployment = DeploymentConfig.from_dict({
-            'name': 'adapter-boundary-test', 'work_dir': str(self.root / 'work'),
-            'source': self.source,
-            'inputs': [{'name': 'states', 'dtype': 'float32', 'shape': (1, 2)}],
-            'outputs': [{'name': 'actions', 'dtype': 'float32', 'shape': (1, 2)}],
+            'name':
+            'adapter-boundary-test',
+            'work_dir':
+            str(self.root / 'work'),
+            'source':
+            self.source,
+            'inputs': [{
+                'name': 'states',
+                'dtype': 'float32',
+                'shape': (1, 2)
+            }],
+            'outputs': [{
+                'name': 'actions',
+                'dtype': 'float32',
+                'shape': (1, 2)
+            }],
         })
         self.states = torch.tensor([[0.321, -0.789]])
 
@@ -81,8 +99,8 @@ class FluxVLAAdapterTest(unittest.TestCase):
         model, cfg, path, _ = self.adapter(parameter_dtype='float32')._load_model('cpu')
         self.assertEqual(model.norm.dtype, torch.float32)
         torch.testing.assert_close(model.norm, self.weights['norm'], rtol=0, atol=0)
-        self.assertFalse(torch.equal(self.weights['norm'],
-                                     self.weights['norm'].bfloat16().float()))
+        self.assertFalse(
+            torch.equal(self.weights['norm'], self.weights['norm'].bfloat16().float()))
         self.assertEqual(model.counter.dtype, torch.int64)
         self.assertEqual(model.counter.item(), 7)
         self.assertFalse(model.training)
@@ -96,30 +114,30 @@ class FluxVLAAdapterTest(unittest.TestCase):
                 model, _, _, _ = self.adapter(**options)._load_model('cpu')
                 self.assertEqual(model.norm.dtype, torch.bfloat16)
                 self.assertEqual(model.projection.weight.dtype, torch.float32)
-                torch.testing.assert_close(model.norm, self.weights['norm'].bfloat16(),
-                                           rtol=0, atol=0)
+                torch.testing.assert_close(
+                    model.norm, self.weights['norm'].bfloat16(), rtol=0, atol=0)
 
     def test_explicit_low_precision_is_never_inferred_from_runner(self):
         for name in ('float16', 'bfloat16'):
             with self.subTest(dtype=name):
                 model, _, _, _ = self.adapter(parameter_dtype=name)._load_model('cpu')
-                self.assertTrue(all(p.dtype == getattr(torch, name)
-                                    for p in model.parameters()))
+                self.assertTrue(
+                    all(p.dtype == getattr(torch, name) for p in model.parameters()))
                 self.assertEqual(model.counter.dtype, torch.int64)
 
     def test_native_safetensors_still_loads_strictly(self):
-        for state in ({'norm': self.weights['norm']},
-                      dict(self.weights, norm=torch.ones(3)),
-                      dict(self.weights, extra=torch.ones(1))):
+        for state in ({
+                'norm': self.weights['norm']
+        }, dict(self.weights,
+                norm=torch.ones(3)), dict(self.weights, extra=torch.ones(1))):
             with self.subTest(keys=tuple(state)):
                 save_file(state, self.root / 'model.safetensors')
                 with self.assertRaises(RuntimeError):
                     self.adapter(parameter_dtype='float32')._load_model('cpu')
 
     def test_invalid_precision_fields_fail_explicitly(self):
-        for field, values in (
-                ('parameter_dtype', ('bf16', 'int64', False, [])),
-                ('autocast_dtype', ('float32', 'bf16', True, {}))):
+        for field, values in (('parameter_dtype', ('bf16', 'int64', False, [])),
+                              ('autocast_dtype', ('float32', 'bf16', True, {}))):
             for value in values:
                 with self.subTest(field=field, value=value):
                     with self.assertRaisesRegex(ConfigurationError, field):
@@ -173,10 +191,16 @@ class FluxVLAAdapterTest(unittest.TestCase):
 
     def test_noise_binding_is_cloned_and_repeated_reference_is_identical(self):
         self.deployment = DeploymentConfig.from_dict({
-            'name': 'noise-test', 'work_dir': str(self.root / 'work'),
-            'source': self.source,
-            'inputs': [dict(name=name, dtype='float32', shape=(1, 2))
-                       for name in ('states', 'epsilon')],
+            'name':
+            'noise-test',
+            'work_dir':
+            str(self.root / 'work'),
+            'source':
+            self.source,
+            'inputs': [
+                dict(name=name, dtype='float32', shape=(1, 2))
+                for name in ('states', 'epsilon')
+            ],
             'outputs': [dict(name='actions', dtype='float32', shape=(1, 2))],
         })
         adapter = self.adapter(bindings={'states': 'states', 'noise': 'epsilon'})
@@ -188,7 +212,7 @@ class FluxVLAAdapterTest(unittest.TestCase):
         prepared = PreparedModel(
             module=adapter._make_wrapper(model, torch),
             inputs=OrderedDict(states=self.states, epsilon=noise),
-            output_names=('actions',))
+            output_names=('actions', ))
         with torch.inference_mode():
             expected = model.predict_action(self.states, noise.clone())['actions']
             first = prepared.run_reference()['actions']
@@ -211,7 +235,7 @@ class FluxVLAAdapterTest(unittest.TestCase):
                     self.assertEqual(field in prepared.metadata, field in options)
                     if field in options:
                         self.assertEqual(prepared.metadata[field], options[field])
-                self.assertEqual(tuple(prepared.run_reference()), ('actions',))
+                self.assertEqual(tuple(prepared.run_reference()), ('actions', ))
 
 
 if __name__ == '__main__':

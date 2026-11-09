@@ -18,7 +18,7 @@ def _walk_tensor_protos(message):
         return
     for field, value in message.ListFields():
         if field.type == field.TYPE_MESSAGE:
-            children = value if field.label == field.LABEL_REPEATED else (value,)
+            children = value if field.label == field.LABEL_REPEATED else (value, )
             for child in children:
                 yield from _walk_tensor_protos(child)
 
@@ -26,8 +26,10 @@ def _walk_tensor_protos(message):
 def _restore_external_references(onnx, source, converted):
     """Restore only uniquely named tensors with identical non-reference fields."""
     source_tensors = list(_walk_tensor_protos(source))
-    external = [value for value in source_tensors
-                if value.data_location == onnx.TensorProto.EXTERNAL]
+    external = [
+        value for value in source_tensors
+        if value.data_location == onnx.TensorProto.EXTERNAL
+    ]
     counts = Counter(value.name for value in source_tensors)
     by_name = {}
     for value in external:
@@ -53,9 +55,8 @@ def _restore_external_references(onnx, source, converted):
             tensor.ClearField('external_data')
             tensor.ClearField('data_location')
         if before != after:
-            raise ArtifactError(
-                f'Conversion changed external tensor {original.name}; '
-                'its storage reference was not reassigned.')
+            raise ArtifactError(f'Conversion changed external tensor {original.name}; '
+                                'its storage reference was not reassigned.')
         pairs.append((current, original))
     # Validate every match before changing any tensor or saving a graph.
     for current, original in pairs:
@@ -94,8 +95,8 @@ def export_onnx(
     if not isinstance(compat, bool):
         raise ConfigurationError('legacy_bf16_compat must be a boolean.')
     target_opset = options.get('target_opset')
-    if target_opset is not None and (
-            isinstance(target_opset, bool) or not isinstance(target_opset, int)):
+    if target_opset is not None and (isinstance(target_opset, bool)
+                                     or not isinstance(target_opset, int)):
         raise ConfigurationError('target_opset must be an integer.')
     if compat and bool(options.get('dynamo', False)):
         raise ConfigurationError('legacy_bf16_compat requires dynamo=False.')
@@ -122,8 +123,9 @@ def export_onnx(
         kwargs['external_data'] = bool(options.get('external_data', True))
     if target_opset is not None and target_opset < kwargs['opset_version']:
         raise ConfigurationError('target_opset must not be lower than export opset.')
-    context = (legacy_bf16_symbolics(torch, kwargs['opset_version'])
-               if compat else nullcontext())
+    context = (
+        legacy_bf16_symbolics(torch, kwargs['opset_version'])
+        if compat else nullcontext())
     view_context = normalize_full_slices(torch) if normalize_views else nullcontext({})
     with EXPORT_LOCK, context, view_context as view_stats, torch.inference_mode():
         torch.onnx.export(prepared.module, arguments, str(output), **kwargs)
@@ -138,25 +140,32 @@ def export_onnx(
             raise DependencyError('ONNX checking requires the onnx package.') from error
         # Keep large weight files external throughout conversion/serialization.
         model = _load_convert(onnx, output, target_opset)
+
         def info(value):
             tensor = value.type.tensor_type
-            return dict(name=value.name,
-                        dtype=onnx.TensorProto.DataType.Name(tensor.elem_type),
-                        shape=[dim.dim_param if dim.dim_param else
-                               dim.dim_value if dim.HasField('dim_value') else None
-                               for dim in tensor.shape.dim])
+            return dict(
+                name=value.name,
+                dtype=onnx.TensorProto.DataType.Name(tensor.elem_type),
+                shape=[
+                    dim.dim_param if dim.dim_param else
+                    dim.dim_value if dim.HasField('dim_value') else None
+                    for dim in tensor.shape.dim
+                ])
+
         actual_names = [value.name for value in model.graph.input]
         pruned = sorted(set(input_names) - set(actual_names))
         prepared.metadata['onnx_io'] = dict(
             inputs=[info(value) for value in model.graph.input],
             outputs=[info(value) for value in model.graph.output],
             pruned_inputs=pruned,
-            opsets={item.domain: item.version for item in model.opset_import})
+            opsets={item.domain: item.version
+                    for item in model.opset_import})
         if compat:
             if actual_names != input_names:
                 raise ArtifactError(f'Unexpected ONNX input names: {actual_names}; '
                                     f'pruned={pruned}')
-            if tuple(value.name for value in model.graph.output) != prepared.output_names:
+            if tuple(value.name
+                     for value in model.graph.output) != prepared.output_names:
                 raise ArtifactError('Unexpected ONNX output names.')
         onnx.checker.check_model(
             str(output), full_check=compat or target_opset is not None)

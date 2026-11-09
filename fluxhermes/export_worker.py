@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
 import traceback
+from pathlib import Path
 
 from .config import DeploymentConfig
 from .pipeline import CompilePipeline
@@ -20,21 +20,25 @@ def main():
     pipeline = CompilePipeline(config)
     state = dict(run_id=run_id, pid=os.getpid(), passed=False)
     try:
-        device = str(config.codebase.get('device', config.source.get('device', 'cuda:0')))
+        device = str(
+            config.codebase.get('device', config.source.get('device', 'cuda:0')))
         processor, prepared, graph_path = pipeline._prepare_ir(device)
         import numpy as np
         arrays = {}
         for name, value in prepared.inputs.items():
             if not hasattr(value, 'detach'):
-                raise TypeError('Isolated export requires tensor representative inputs.')
+                raise TypeError(
+                    'Isolated export requires tensor representative inputs.')
             arrays[name] = value.detach().cpu().numpy()
         np.savez(config.work_dir / 'export-inputs.npz', **arrays)
         metadata = dict(prepared.metadata)
         metadata.update(processor.runtime_metadata())
         state.update(passed=True, graph_path=str(graph_path), source_metadata=metadata)
     except Exception as error:
-        state['error'] = dict(type=type(error).__name__, message=str(error),
-                              traceback=traceback.format_exc())
+        state['error'] = dict(
+            type=type(error).__name__,
+            message=str(error),
+            traceback=traceback.format_exc())
         raise
     finally:
         state['stages'] = pipeline.pipeline_manager.report()

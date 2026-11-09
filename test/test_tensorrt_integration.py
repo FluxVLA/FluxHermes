@@ -1,37 +1,45 @@
 """Opt-in tests against an actual CUDA device and TensorRT, without mocks."""
 import os
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 
-@unittest.skipUnless(os.environ.get('FLUXHERMES_RUN_TRT_TESTS') == '1',
-                     'Set FLUXHERMES_RUN_TRT_TESTS=1 for real GPU integration')
+@unittest.skipUnless(
+    os.environ.get('FLUXHERMES_RUN_TRT_TESTS') == '1',
+    'Set FLUXHERMES_RUN_TRT_TESTS=1 for real GPU integration')
 class TensorRTIntegrationTests(unittest.TestCase):
+
     def test_strong_bf16_engine_profile_and_inference(self):
         import onnx
         import torch
         from onnx import TensorProto, helper
+
         from fluxhermes.builders.tensorrt import build_tensorrt_engine
-        from fluxhermes.runtime.tensorrt import TensorRTEngine
         from fluxhermes.contracts import TensorSpec
+        from fluxhermes.runtime.tensorrt import TensorRTEngine
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            graph = helper.make_graph([
-                helper.make_node('Cast', ['x'], ['b'], to=TensorProto.BFLOAT16),
-                helper.make_node('Cast', ['b'], ['y'], to=TensorProto.FLOAT),
-            ], 'bf16-roundtrip',
+            graph = helper.make_graph(
+                [
+                    helper.make_node('Cast', ['x'], ['b'], to=TensorProto.BFLOAT16),
+                    helper.make_node('Cast', ['b'], ['y'], to=TensorProto.FLOAT),
+                ], 'bf16-roundtrip',
                 [helper.make_tensor_value_info('x', TensorProto.FLOAT, ['batch', 2])],
                 [helper.make_tensor_value_info('y', TensorProto.FLOAT, ['batch', 2])])
-            model = helper.make_model(graph, opset_imports=[helper.make_opsetid('', 22)])
+            model = helper.make_model(
+                graph, opset_imports=[helper.make_opsetid('', 22)])
             model.ir_version = 10
             onnx.save(model, root / 'model.onnx')
             details = build_tensorrt_engine(
                 root / 'model.onnx', root / 'model.engine',
                 [TensorSpec('x', 'float32', (-1, 2), (1, 2), (2, 2), (4, 2))],
-                dict(precision='bf16', strongly_typed=True, allow_tf32=False,
-                     workspace_size_gib=0.25))
+                dict(
+                    precision='bf16',
+                    strongly_typed=True,
+                    allow_tf32=False,
+                    workspace_size_gib=0.25))
             self.assertTrue(details['strongly_typed'])
             self.assertFalse(details['allow_tf32'])
             runtime = TensorRTEngine(root / 'model.engine')

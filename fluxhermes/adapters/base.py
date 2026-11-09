@@ -20,7 +20,8 @@ class PreparedModel:
     reference_runner: Optional[Callable[[Mapping[str, Any]], Any]] = None
 
     def run_reference(
-        self, inputs: Optional[Mapping[str, Any]] = None,
+        self,
+        inputs: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         inputs = self.inputs if inputs is None else inputs
         if set(inputs) != set(self.inputs):
@@ -38,9 +39,8 @@ class PreparedModel:
             raise TypeError(
                 'Multiple output_names require the module to return a list or tuple.')
         if len(result) != len(self.output_names):
-            raise ValueError(
-                f'Module returned {len(result)} values for '
-                f'{len(self.output_names)} output names.')
+            raise ValueError(f'Module returned {len(result)} values for '
+                             f'{len(self.output_names)} output names.')
         return dict(zip(self.output_names, result))
 
 

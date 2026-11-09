@@ -42,8 +42,8 @@ class TensorSpec:
         if not self.dtype:
             raise ConfigurationError(f'{self.name}: dtype cannot be empty.')
         profiles = (self.min_shape, self.opt_shape, self.max_shape)
-        if any(item is not None for item in profiles) and not all(
-                item is not None for item in profiles):
+        if any(item is not None for item in profiles) and not all(item is not None
+                                                                  for item in profiles):
             raise ConfigurationError(
                 f'{self.name}: min/opt/max shapes must be provided together.')
         if all(item is not None for item in profiles):
@@ -54,8 +54,8 @@ class TensorSpec:
             assert self.min_shape is not None
             assert self.opt_shape is not None
             assert self.max_shape is not None
-            for minimum, optimum, maximum in zip(
-                    self.min_shape, self.opt_shape, self.max_shape):
+            for minimum, optimum, maximum in zip(self.min_shape, self.opt_shape,
+                                                 self.max_shape):
                 if not minimum <= optimum <= maximum:
                     raise ConfigurationError(
                         f'{self.name}: expected min <= opt <= max, got '
@@ -162,8 +162,7 @@ class DeploymentConfig:
             source_type = str(source.get('type', ''))
             codebase = {
                 'type': source_type,
-                'task': (
-                    'predict_action' if source_type == 'fluxvla' else 'custom'),
+                'task': ('predict_action' if source_type == 'fluxvla' else 'custom'),
                 'source': source,
             }
         else:

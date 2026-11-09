@@ -9,8 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fluxhermes.builders.tensorrt import (
-    _resolve_strongly_typed, build_tensorrt_engine)
+from fluxhermes.builders.tensorrt import _resolve_strongly_typed, build_tensorrt_engine
 from fluxhermes.contracts import DeploymentConfig
 from fluxhermes.errors import ConfigurationError
 from fluxhermes.optimization.onnx import lower_onnx_precision
@@ -21,12 +20,28 @@ class BF16ConfigTest(unittest.TestCase):
     @staticmethod
     def config(**options):
         return DeploymentConfig.from_dict({
-            'name': 'bf16-test',
-            'work_dir': 'work',
-            'source': {'type': 'python', 'factory': 'example:factory'},
-            'inputs': [{'name': 'x', 'dtype': 'float32', 'shape': (2,)}],
-            'outputs': [{'name': 'y', 'dtype': 'float32', 'shape': (2,)}],
-            'backend_config': {'type': 'tensorrt', **options},
+            'name':
+            'bf16-test',
+            'work_dir':
+            'work',
+            'source': {
+                'type': 'python',
+                'factory': 'example:factory'
+            },
+            'inputs': [{
+                'name': 'x',
+                'dtype': 'float32',
+                'shape': (2, )
+            }],
+            'outputs': [{
+                'name': 'y',
+                'dtype': 'float32',
+                'shape': (2, )
+            }],
+            'backend_config': {
+                'type': 'tensorrt',
+                **options
+            },
         })
 
     def test_bf16_label_roundtrips(self):
@@ -41,8 +56,9 @@ class BF16ConfigTest(unittest.TestCase):
     def test_bf16_default_typing_is_resolved_by_builder(self):
         config = self.config(precision='bf16')
         self.assertNotIn('strongly_typed', config.backend)
-        self.assertTrue(_resolve_strongly_typed(
-            10, config.precision, config.backend.get('strongly_typed', 'auto')))
+        self.assertTrue(
+            _resolve_strongly_typed(10, config.precision,
+                                    config.backend.get('strongly_typed', 'auto')))
 
     def test_bf16_rejects_explicit_weak_typing(self):
         with self.assertRaisesRegex(ConfigurationError, 'strongly_typed=True'):
@@ -69,8 +85,8 @@ class BF16ConfigTest(unittest.TestCase):
         for value in (None, 0, 1, 'false'):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ConfigurationError, 'allow_tf32'):
-                    build_tensorrt_engine(
-                        'unused.onnx', 'unused.plan', (), {'allow_tf32': value})
+                    build_tensorrt_engine('unused.onnx', 'unused.plan', (),
+                                          {'allow_tf32': value})
 
 
 class BF16TypingTest(unittest.TestCase):
@@ -107,10 +123,16 @@ class BF16OnnxPreservationTest(unittest.TestCase):
 
         # Genuine mixed BF16/FLOAT graph, including stored BF16 initializer bits.
         weights = [
-            helper.make_tensor('bf16_bias', TensorProto.BFLOAT16, [2],
-                               struct.pack('<HH', 0x3FC0, 0xC000), raw=True),
-            helper.make_tensor('fp32_bias', TensorProto.FLOAT, [2],
-                               struct.pack('<ff', 0.25, 0.5), raw=True),
+            helper.make_tensor(
+                'bf16_bias',
+                TensorProto.BFLOAT16, [2],
+                struct.pack('<HH', 0x3FC0, 0xC000),
+                raw=True),
+            helper.make_tensor(
+                'fp32_bias',
+                TensorProto.FLOAT, [2],
+                struct.pack('<ff', 0.25, 0.5),
+                raw=True),
         ]
         nodes = [
             helper.make_node('Cast', ['x'], ['xb'], to=TensorProto.BFLOAT16),
@@ -119,16 +141,20 @@ class BF16OnnxPreservationTest(unittest.TestCase):
             helper.make_node('Add', ['yf', 'fp32_bias'], ['y']),
         ]
         graph = helper.make_graph(
-            nodes, 'mixed-dtype',
-            [helper.make_tensor_value_info('x', TensorProto.FLOAT, [2])],
+            nodes,
+            'mixed-dtype', [helper.make_tensor_value_info('x', TensorProto.FLOAT, [2])],
             [helper.make_tensor_value_info('y', TensorProto.FLOAT, [2])],
             initializer=weights)
         model = helper.make_model(
             graph, opset_imports=[helper.make_opsetid('', 22)], ir_version=10)
         if external:
-            onnx.save_model(model, str(path), save_as_external_data=True,
-                            all_tensors_to_one_file=True, location='weights.bin',
-                            size_threshold=0)
+            onnx.save_model(
+                model,
+                str(path),
+                save_as_external_data=True,
+                all_tensors_to_one_file=True,
+                location='weights.bin',
+                size_threshold=0)
         else:
             onnx.save_model(model, str(path))
         onnx.checker.check_model(str(path), full_check=True)
@@ -147,12 +173,13 @@ class BF16OnnxPreservationTest(unittest.TestCase):
                         if external:
                             self.assertIn('weights.bin', before)
                         output = root / 'lowered' / 'model.onnx'
-                        actual = lower_onnx_precision(
-                            source, output, 'bf16', {'fp16_conversion': conversion})
+                        actual = lower_onnx_precision(source, output, 'bf16',
+                                                      {'fp16_conversion': conversion})
                         self.assertEqual(actual, source.resolve())
                         self.assertFalse(output.parent.exists())
                         self.assertEqual(
-                            {p.name: p.read_bytes() for p in root.iterdir()}, before)
+                            {p.name: p.read_bytes()
+                             for p in root.iterdir()}, before)
                         model = onnx.load(str(actual), load_external_data=True)
                         onnx.checker.check_model(model, full_check=True)
                         self.assertEqual(
@@ -166,9 +193,9 @@ class BF16OnnxPreservationTest(unittest.TestCase):
             self.make_graph(source, external=False)
             output = root / 'lowered.onnx'
             for precision in ('fp32', 'int8', 'fp16'):
-                self.assertEqual(lower_onnx_precision(
-                    source, output, precision, {'fp16_conversion': False}),
-                    source.resolve())
+                self.assertEqual(
+                    lower_onnx_precision(source, output, precision,
+                                         {'fp16_conversion': False}), source.resolve())
             with self.assertRaisesRegex(ValueError, 'Unsupported'):
                 lower_onnx_precision(source, output, 'fp8', {})
             self.assertFalse(output.exists())

@@ -39,9 +39,8 @@ class FluxVLAAdapter(ModelAdapter):
         return path.resolve()
 
     def _import_stack(self):
-        root = Path(
-            self.source.get('fluxvla_root', os.getenv('FLUXVLA_ROOT', ''))
-        ).expanduser()
+        root = Path(self.source.get('fluxvla_root', os.getenv('FLUXVLA_ROOT',
+                                                              ''))).expanduser()
         if not str(root):
             raise ConfigurationError(
                 'source.fluxvla_root or FLUXVLA_ROOT must be configured.')
@@ -61,9 +60,9 @@ class FluxVLAAdapter(ModelAdapter):
 
     def _precision_dtypes(self, torch: Any):
         dtypes = []
-        for field, allowed in (
-                ('parameter_dtype', (None, 'float32', 'float16', 'bfloat16')),
-                ('autocast_dtype', (None, 'float16', 'bfloat16'))):
+        for field, allowed in (('parameter_dtype', (None, 'float32', 'float16',
+                                                    'bfloat16')),
+                               ('autocast_dtype', (None, 'float16', 'bfloat16'))):
             value = self.source.get(field)
             if value not in allowed:
                 raise ConfigurationError(
@@ -115,8 +114,7 @@ class FluxVLAAdapter(ModelAdapter):
             files = [checkpoint] if checkpoint.is_file() else sorted(
                 checkpoint.glob('*.safetensors'))
             if not files:
-                raise ConfigurationError(
-                    f'No safetensors files found in {checkpoint}')
+                raise ConfigurationError(f'No safetensors files found in {checkpoint}')
             state_dict: Dict[str, Any] = {}
             for path in files:
                 state_dict.update(load_file(str(path), device='cpu'))
@@ -135,10 +133,9 @@ class FluxVLAAdapter(ModelAdapter):
                 device=device,
                 **dict(self.source.get('sample_kwargs', {})),
             )
-            return OrderedDict((spec.name, samples[spec.name])
-                               for spec in self.deployment.inputs)
-        sample_path = self._deployment_path(
-            str(self.source.get('sample_inputs', '')))
+            return OrderedDict(
+                (spec.name, samples[spec.name]) for spec in self.deployment.inputs)
+        sample_path = self._deployment_path(str(self.source.get('sample_inputs', '')))
         if not sample_path.is_file():
             raise ConfigurationError(
                 'FluxVLA export needs source.sample_inputs (.npz) or '
@@ -149,15 +146,14 @@ class FluxVLAAdapter(ModelAdapter):
             raise DependencyError('Loading NPZ samples requires numpy.') from error
         with np.load(sample_path, allow_pickle=False) as archive:
             missing = [
-                spec.name for spec in self.deployment.inputs
-                if spec.name not in archive
+                spec.name for spec in self.deployment.inputs if spec.name not in archive
             ]
             if missing:
                 raise ConfigurationError(
                     f'Sample input file is missing: {", ".join(missing)}')
-            return OrderedDict((spec.name,
-                                torch.from_numpy(archive[spec.name]).to(device))
-                               for spec in self.deployment.inputs)
+            return OrderedDict(
+                (spec.name, torch.from_numpy(archive[spec.name]).to(device))
+                for spec in self.deployment.inputs)
 
     def _make_wrapper(self, model: Any, torch: Any, device: str = 'cpu') -> Any:
         _, autocast_dtype = self._precision_dtypes(torch)
@@ -196,9 +192,11 @@ class FluxVLAAdapter(ModelAdapter):
                 # fixture identical across reference, export and repeated calls.
                 if torch.is_tensor(kwargs.get('noise')):
                     kwargs['noise'] = kwargs['noise'].clone()
-                context = (torch.autocast(
-                    device_type, dtype=autocast_dtype,
-                    enabled=autocast_dtype is not None)
+                context = (
+                    torch.autocast(
+                        device_type,
+                        dtype=autocast_dtype,
+                        enabled=autocast_dtype is not None)
                     if explicit_autocast else nullcontext())
                 with context:
                     result = self.wrapped_model.predict_action(**kwargs)
@@ -271,8 +269,10 @@ class FluxVLAAdapter(ModelAdapter):
                 'config': str(self.source.get('config')),
                 'checkpoint': str(checkpoint),
                 'model_section': str(self.source.get('model_section', 'model')),
-                **{key: self.source[key]
-                   for key in ('parameter_dtype', 'autocast_dtype')
-                   if key in self.source},
+                **{
+                    key: self.source[key]
+                    for key in ('parameter_dtype', 'autocast_dtype')
+                    if key in self.source
+                },
             },
         )

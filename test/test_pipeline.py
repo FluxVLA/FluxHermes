@@ -14,10 +14,13 @@ from fluxhermes.pipeline import CompilePipeline
 def mismatched_reference_factory(deployment, device):
     """Deliberate negative control, executed through real TensorRT."""
     import torch
+
     from fluxhermes.adapters.base import PreparedModel
     return PreparedModel(
-        module=torch.nn.Identity(), inputs={'x': torch.ones(1, 2, device=device)},
-        output_names=('y',), reference_runner=lambda inputs: inputs['x'] + 1)
+        module=torch.nn.Identity(),
+        inputs={'x': torch.ones(1, 2, device=device)},
+        output_names=('y', ),
+        reference_runner=lambda inputs: inputs['x'] + 1)
 
 
 class PipelinePlanTest(unittest.TestCase):
@@ -32,30 +35,47 @@ class PipelinePlanTest(unittest.TestCase):
         self.assertEqual(plan['backend'], 'tensorrt')
         self.assertTrue(plan['stages'][2]['enabled'])
 
-    @unittest.skipUnless(os.environ.get('FLUXHERMES_RUN_TRT_TESTS') == '1',
-                         'opt-in real TensorRT integration')
+    @unittest.skipUnless(
+        os.environ.get('FLUXHERMES_RUN_TRT_TESTS') == '1',
+        'opt-in real TensorRT integration')
     def test_real_pipeline_persists_numerical_failure(self):
         from fluxhermes.errors import ValidationError
-        for strict, isolated in ((True, False), (False, False), (True, True), (False, True)):
-            with self.subTest(strict=strict, isolated=isolated), tempfile.TemporaryDirectory() as directory:
+        for strict, isolated in ((True, False), (False, False), (True, True), (False,
+                                                                               True)):
+            with self.subTest(
+                    strict=strict,
+                    isolated=isolated), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 path = root / 'deploy.py'
-                path.write_text('deployment = ' + repr(dict(
-                    name='negative-control', work_dir=str(root / 'work'),
-                    codebase_config=dict(type='python', task='custom', device='cuda:0',
-                                         isolate_export=isolated,
-                                         python_paths=[str(Path(__file__).parent)],
-                                         source=dict(type='python', device='cuda:0',
-                                             factory=f'{__name__}:mismatched_reference_factory')),
-                    inputs=[dict(name='x', dtype='float32', shape=(1, 2))],
-                    outputs=[dict(name='y', dtype='float32', shape=(1, 2))],
-                    backend_config=dict(type='tensorrt', precision='fp32'),
-                    optimization=dict(simplify=False),
-                    ir_config=dict(type='onnx', opset=18, dynamo=False),
-                    validation=dict(atol=.02, rtol=.02,
-                                    min_cosine_similarity=.999, fail_on_error=strict),
-                    package=dict(output_dir=str(root / 'bundle')),
-                )), encoding='utf-8')
+                path.write_text(
+                    'deployment = ' + repr(
+                        dict(
+                            name='negative-control',
+                            work_dir=str(root / 'work'),
+                            codebase_config=dict(
+                                type='python',
+                                task='custom',
+                                device='cuda:0',
+                                isolate_export=isolated,
+                                python_paths=[str(Path(__file__).parent)],
+                                source=dict(
+                                    type='python',
+                                    device='cuda:0',
+                                    factory=f'{__name__}:mismatched_reference_factory')
+                            ),
+                            inputs=[dict(name='x', dtype='float32', shape=(1, 2))],
+                            outputs=[dict(name='y', dtype='float32', shape=(1, 2))],
+                            backend_config=dict(type='tensorrt', precision='fp32'),
+                            optimization=dict(simplify=False),
+                            ir_config=dict(type='onnx', opset=18, dynamo=False),
+                            validation=dict(
+                                atol=.02,
+                                rtol=.02,
+                                min_cosine_similarity=.999,
+                                fail_on_error=strict),
+                            package=dict(output_dir=str(root / 'bundle')),
+                        )),
+                    encoding='utf-8')
                 pipeline = CompilePipeline(load_config(path))
                 if strict:
                     with self.assertRaises(ValidationError):

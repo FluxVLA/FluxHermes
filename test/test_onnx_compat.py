@@ -18,6 +18,7 @@ from fluxhermes.exporters.onnx import _load_convert, export_onnx
 
 
 class Attention(torch.nn.Module):
+
     def __init__(self, scale, amp=False):
         super().__init__()
         self.scale, self.amp = scale, amp
@@ -28,6 +29,7 @@ class Attention(torch.nn.Module):
 
 
 class GroupedAttention(torch.nn.Module):
+
     def __init__(self, causal=False):
         super().__init__()
         self.causal = causal
@@ -38,6 +40,7 @@ class GroupedAttention(torch.nn.Module):
 
 
 class BooleanAssignment(torch.nn.Module):
+
     def forward(self, x, mask, values):
         x = x.clone()
         x[mask, :] = x[mask, :] + values
@@ -45,11 +48,13 @@ class BooleanAssignment(torch.nn.Module):
 
 
 class PartialSlice(torch.nn.Module):
+
     def forward(self, x):
         return x[:, 1::2, :]
 
 
 class Cumulative(torch.nn.Module):
+
     def __init__(self, dtype=None):
         super().__init__()
         self.dtype = dtype
@@ -59,16 +64,19 @@ class Cumulative(torch.nn.Module):
 
 
 class Failing(torch.nn.Module):
+
     def forward(self, x):
         raise RuntimeError('deliberate forward failure')
 
 
 class IgnoresInput(torch.nn.Module):
+
     def forward(self, x, unused):
         return x + 1
 
 
 class ONNXCompatTest(unittest.TestCase):
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -78,7 +86,7 @@ class ONNXCompatTest(unittest.TestCase):
         self.count = 0
 
     def prepared(self, model, inputs):
-        return PreparedModel(model.eval(), inputs, ('out',))
+        return PreparedModel(model.eval(), inputs, ('out', ))
 
     def export(self, prepared, **kwargs):
         self.count += 1
@@ -88,8 +96,8 @@ class ONNXCompatTest(unittest.TestCase):
     def runtime(self, path, inputs):
         options = ort.SessionOptions()
         options.intra_op_num_threads = options.inter_op_num_threads = 1
-        session = ort.InferenceSession(str(path), sess_options=options,
-                                       providers=['CPUExecutionProvider'])
+        session = ort.InferenceSession(
+            str(path), sess_options=options, providers=['CPUExecutionProvider'])
         return session.run(None, {k: v.numpy() for k, v in inputs.items()})[0]
 
     def assert_restored(self):
@@ -105,9 +113,10 @@ class ONNXCompatTest(unittest.TestCase):
     def test_positive_scale_and_bf16_matrix(self):
         for dtype, amp in ((torch.float32, False), (torch.bfloat16, False),
                            (torch.float32, True)):
-            inputs = dict(q=torch.randn(2, 2, 3, 8).to(dtype),
-                          k=torch.randn(2, 2, 5, 8).to(dtype),
-                          v=torch.randn(2, 2, 5, 8).to(dtype))
+            inputs = dict(
+                q=torch.randn(2, 2, 3, 8).to(dtype),
+                k=torch.randn(2, 2, 5, 8).to(dtype),
+                v=torch.randn(2, 2, 5, 8).to(dtype))
             for scale in (None, 0.3, 1.0):
                 for fold in (False, True):
                     with self.subTest(dtype=dtype, amp=amp, scale=scale, fold=fold):
@@ -118,7 +127,8 @@ class ONNXCompatTest(unittest.TestCase):
                             np.testing.assert_allclose(
                                 self.runtime(path, inputs),
                                 prepared.run_reference()['out'].numpy(),
-                                rtol=1e-5, atol=1e-6)
+                                rtol=1e-5,
+                                atol=1e-6)
                         self.assert_restored()
 
     def test_grouped_query_attention_lowering(self):
@@ -126,25 +136,41 @@ class ONNXCompatTest(unittest.TestCase):
             for kv_heads in (1, 2, 4):
                 for causal in (False, True):
                     with self.subTest(dtype=dtype, kv_heads=kv_heads, causal=causal):
-                        inputs = dict(q=torch.randn(2, 4, 3, 8).to(dtype),
-                                      k=torch.randn(2, kv_heads, 5, 8).to(dtype),
-                                      v=torch.randn(2, kv_heads, 5, 8).to(dtype))
+                        inputs = dict(
+                            q=torch.randn(2, 4, 3, 8).to(dtype),
+                            k=torch.randn(2, kv_heads, 5, 8).to(dtype),
+                            v=torch.randn(2, kv_heads, 5, 8).to(dtype))
                         prepared = self.prepared(GroupedAttention(causal), inputs)
                         prepared.dynamic_axes = dict(
-                            q={0: 'batch', 2: 'qlen'},
-                            k={0: 'batch', 2: 'kvlen'},
-                            v={0: 'batch', 2: 'kvlen'},
-                            out={0: 'batch', 2: 'qlen'})
+                            q={
+                                0: 'batch',
+                                2: 'qlen'
+                            },
+                            k={
+                                0: 'batch',
+                                2: 'kvlen'
+                            },
+                            v={
+                                0: 'batch',
+                                2: 'kvlen'
+                            },
+                            out={
+                                0: 'batch',
+                                2: 'qlen'
+                            })
                         path = self.export(prepared, do_constant_folding=False)
                         if dtype == torch.float32:
                             for batch, qlen, kvlen in ((2, 3, 5), (1, 4, 6)):
-                                sample = dict(q=torch.randn(batch, 4, qlen, 8),
-                                              k=torch.randn(batch, kv_heads, kvlen, 8),
-                                              v=torch.randn(batch, kv_heads, kvlen, 8))
+                                sample = dict(
+                                    q=torch.randn(batch, 4, qlen, 8),
+                                    k=torch.randn(batch, kv_heads, kvlen, 8),
+                                    v=torch.randn(batch, kv_heads, kvlen, 8))
                                 expected = prepared.module(*sample.values()).numpy()
                                 np.testing.assert_allclose(
-                                    self.runtime(path, sample), expected,
-                                    rtol=1e-5, atol=1e-6)
+                                    self.runtime(path, sample),
+                                    expected,
+                                    rtol=1e-5,
+                                    atol=1e-6)
                         self.assert_restored()
 
     def test_boolean_assignment_full_slice_normalization(self):
@@ -153,14 +179,17 @@ class ONNXCompatTest(unittest.TestCase):
         for shape, count in (((1, 142, 8), 128), ((2, 7, 4), 3), ((1, 142, 8), 142)):
             mask = torch.zeros(shape[:2], dtype=torch.bool)
             mask.flatten()[:count] = True
-            inputs = dict(x=torch.randn(shape), mask=mask,
-                          values=torch.randn(count, shape[-1]))
+            inputs = dict(
+                x=torch.randn(shape), mask=mask, values=torch.randn(count, shape[-1]))
             prepared = self.prepared(BooleanAssignment(), inputs)
-            path = self.export(prepared, normalize_full_slices=True,
-                               do_constant_folding=False)
-            np.testing.assert_array_equal(self.runtime(path, inputs),
-                                          prepared.run_reference()['out'].numpy())
-            self.assertGreater(prepared.metadata['jit_view_normalization']['identity_slices_removed'], 0)
+            path = self.export(
+                prepared, normalize_full_slices=True, do_constant_folding=False)
+            np.testing.assert_array_equal(
+                self.runtime(path, inputs),
+                prepared.run_reference()['out'].numpy())
+            self.assertGreater(
+                prepared.metadata['jit_view_normalization']['identity_slices_removed'],
+                0)
             self.assertIs(utils._optimize_graph, original)
             self.assert_restored()
 
@@ -170,8 +199,9 @@ class ONNXCompatTest(unittest.TestCase):
         inputs = dict(x=torch.randn(2, 7, 4))
         prepared = self.prepared(PartialSlice(), inputs)
         path = self.export(prepared, normalize_full_slices=True)
-        np.testing.assert_array_equal(self.runtime(path, inputs),
-                                      prepared.run_reference()['out'].numpy())
+        np.testing.assert_array_equal(
+            self.runtime(path, inputs),
+            prepared.run_reference()['out'].numpy())
         with self.assertRaisesRegex(RuntimeError, 'deliberate forward failure'):
             self.export(self.prepared(Failing(), inputs), normalize_full_slices=True)
         self.assertIs(utils._optimize_graph, original)
@@ -192,67 +222,91 @@ class ONNXCompatTest(unittest.TestCase):
         for dtype in (torch.float32, torch.int64):
             inputs = {'x': torch.tensor([[1, 2, 3]], dtype=dtype)}
             prepared = self.prepared(Cumulative(), inputs)
-            np.testing.assert_array_equal(self.runtime(self.export(prepared), inputs),
-                                          prepared.run_reference()['out'].numpy())
+            np.testing.assert_array_equal(
+                self.runtime(self.export(prepared), inputs),
+                prepared.run_reference()['out'].numpy())
 
     def test_original_failure_without_opt_in_and_cleanup_after_failure(self):
-        inputs = dict(q=torch.randn(1, 1, 3, 8).bfloat16(),
-                      k=torch.randn(1, 1, 3, 8).bfloat16(),
-                      v=torch.randn(1, 1, 3, 8).bfloat16())
+        inputs = dict(
+            q=torch.randn(1, 1, 3, 8).bfloat16(),
+            k=torch.randn(1, 1, 3, 8).bfloat16(),
+            v=torch.randn(1, 1, 3, 8).bfloat16())
         with self.assertRaisesRegex(RuntimeError, 'ComplexDouble'):
-            export_onnx(self.prepared(Attention(0.3), inputs), self.root / 'raw.onnx', {})
+            export_onnx(
+                self.prepared(Attention(0.3), inputs), self.root / 'raw.onnx', {})
         with self.assertRaisesRegex(RuntimeError, 'deliberate forward failure'):
             self.export(self.prepared(Failing(), {'x': torch.ones(1)}))
         self.assert_restored()
 
     def test_preexisting_custom_registration_is_retained(self):
         for opset in (11, 18):
+
             def custom(*args):
                 raise RuntimeError('custom should not execute')
+
             torch.onnx.register_custom_op_symbolic('aten::cumsum', custom, opset)
             try:
                 with self.assertRaisesRegex(ConfigurationError, 'registry conflict'):
                     with legacy_bf16_symbolics(torch, 18):
                         self.fail('conflicting registry entered')
-                self.assertIs(registration.registry.get_function_group(
-                    'aten::cumsum').get(18), custom)
+                self.assertIs(
+                    registration.registry.get_function_group('aten::cumsum').get(18),
+                    custom)
             finally:
                 torch.onnx.unregister_custom_op_symbolic('aten::cumsum', opset)
         self.assert_restored()
 
     def test_same_function_custom_registration_is_still_a_conflict(self):
-        torch.onnx.register_custom_op_symbolic('aten::cumsum', symbolic_opset11.cumsum, 18)
+        torch.onnx.register_custom_op_symbolic('aten::cumsum', symbolic_opset11.cumsum,
+                                               18)
         try:
             with self.assertRaisesRegex(ConfigurationError, 'registry conflict'):
                 with legacy_bf16_symbolics(torch, 18):
                     self.fail('same-function override entered')
-            self.assertTrue(registration.registry.get_function_group(
-                'aten::cumsum')._functions.overridden(18))
+            self.assertTrue(
+                registration.registry.get_function_group(
+                    'aten::cumsum')._functions.overridden(18))
         finally:
             torch.onnx.unregister_custom_op_symbolic('aten::cumsum', 18)
 
     def test_external_registry_change_is_not_deleted(self):
+
         def external(*args):
             raise RuntimeError('external should not execute')
+
         try:
             with self.assertRaisesRegex(ConfigurationError, 'changed during export'):
                 with legacy_bf16_symbolics(torch, 18):
                     torch.onnx.register_custom_op_symbolic('aten::cumsum', external, 18)
-            self.assertIs(registration.registry.get_function_group(
-                'aten::cumsum').get(18), external)
+            self.assertIs(
+                registration.registry.get_function_group('aten::cumsum').get(18),
+                external)
         finally:
             torch.onnx.unregister_custom_op_symbolic('aten::cumsum', 18)
         self.assert_restored()
 
     def test_explicit_options_and_strict_inputs(self):
         prepared = self.prepared(Cumulative(), {'x': torch.ones(2)})
-        for options in ({'legacy_bf16_compat': 'true'},
-                        {'legacy_bf16_compat': True, 'dynamo': True},
-                        {'legacy_bf16_compat': True, 'opset': 19},
-                        {'target_opset': '22'}, {'opset': 18, 'target_opset': 17}):
+        for options in ({
+                'legacy_bf16_compat': 'true'
+        }, {
+                'legacy_bf16_compat': True,
+                'dynamo': True
+        }, {
+                'legacy_bf16_compat': True,
+                'opset': 19
+        }, {
+                'target_opset': '22'
+        }, {
+                'opset': 18,
+                'target_opset': 17
+        }):
             with self.subTest(options=options), self.assertRaises(ConfigurationError):
                 export_onnx(prepared, self.root / 'invalid.onnx', options)
-        prepared = self.prepared(IgnoresInput(), {'x': torch.ones(2), 'unused': torch.ones(2)})
+        prepared = self.prepared(IgnoresInput(), {
+            'x': torch.ones(2),
+            'unused': torch.ones(2)
+        })
         with self.assertRaisesRegex(ArtifactError, 'Unexpected ONNX input names'):
             self.export(prepared)
         self.assertEqual(prepared.metadata['onnx_io']['pruned_inputs'], ['unused'])
@@ -265,8 +319,9 @@ class ONNXCompatTest(unittest.TestCase):
         np.testing.assert_array_equal(self.runtime(path, inputs), [[1., 3., 6.]])
 
     def test_bf16_conv_official_conversion(self):
-        prepared = self.prepared(torch.nn.Conv2d(3, 4, 3).bfloat16(),
-                                 {'x': torch.randn(2, 3, 8, 8).bfloat16()})
+        prepared = self.prepared(
+            torch.nn.Conv2d(3, 4, 3).bfloat16(),
+            {'x': torch.randn(2, 3, 8, 8).bfloat16()})
         path = self.export(prepared, target_opset=22, do_constant_folding=False)
         self.assertEqual(onnx.load(str(path)).opset_import[0].version, 22)
         onnx.checker.check_model(str(path), full_check=True)
@@ -276,32 +331,48 @@ class ONNXCompatTest(unittest.TestCase):
         prepared = self.prepared(torch.nn.Linear(4, 3), {'x': torch.randn(2, 4)})
         export_onnx(prepared, path, {})
         model = onnx.load(str(path))
-        onnx.save_model(model, str(path), save_as_external_data=True,
-                        all_tensors_to_one_file=True, location='weights.bin', size_threshold=0)
+        onnx.save_model(
+            model,
+            str(path),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location='weights.bin',
+            size_threshold=0)
         weights = (self.root / 'weights.bin').read_bytes()
         converted = _load_convert(onnx, path, 22)
-        self.assertTrue(all(not value.HasField('raw_data') for value in converted.graph.initializer))
-        self.assertTrue(all(value.data_location == onnx.TensorProto.EXTERNAL
-                            for value in converted.graph.initializer))
+        self.assertTrue(
+            all(not value.HasField('raw_data')
+                for value in converted.graph.initializer))
+        self.assertTrue(
+            all(value.data_location == onnx.TensorProto.EXTERNAL
+                for value in converted.graph.initializer))
         self.assertEqual((self.root / 'weights.bin').read_bytes(), weights)
         onnx.checker.check_model(str(path), full_check=True)
-        np.testing.assert_allclose(self.runtime(path, prepared.inputs),
-                                   prepared.run_reference()['out'].detach().numpy(),
-                                   rtol=1e-5, atol=1e-6)
+        np.testing.assert_allclose(
+            self.runtime(path, prepared.inputs),
+            prepared.run_reference()['out'].detach().numpy(),
+            rtol=1e-5,
+            atol=1e-6)
 
     def test_external_constant_attribute_survives_converter(self):
         payload = np.arange(6, dtype=np.float32).reshape(2, 3)
         tensor = onnx.numpy_helper.from_array(payload, name='/Constant_attr::value')
-        node = onnx.helper.make_node('Constant', [], ['y'], value=tensor,
-                                     name='/Constant')
-        graph = onnx.helper.make_graph([node], 'external-constant', [], [
-            onnx.helper.make_tensor_value_info('y', onnx.TensorProto.FLOAT, [2, 3])])
-        model = onnx.helper.make_model(graph, ir_version=10,
-                                      opset_imports=[onnx.helper.make_opsetid('', 18)])
+        node = onnx.helper.make_node(
+            'Constant', [], ['y'], value=tensor, name='/Constant')
+        graph = onnx.helper.make_graph(
+            [node], 'external-constant', [],
+            [onnx.helper.make_tensor_value_info('y', onnx.TensorProto.FLOAT, [2, 3])])
+        model = onnx.helper.make_model(
+            graph, ir_version=10, opset_imports=[onnx.helper.make_opsetid('', 18)])
         path = self.root / 'constant.onnx'
-        onnx.save_model(model, str(path), save_as_external_data=True,
-                        all_tensors_to_one_file=True, location='constant.bin',
-                        size_threshold=0, convert_attribute=True)
+        onnx.save_model(
+            model,
+            str(path),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location='constant.bin',
+            size_threshold=0,
+            convert_attribute=True)
         before = onnx.load(str(path), load_external_data=False)
         original = before.graph.node[0].attribute[0].t
         self.assertEqual(original.data_location, onnx.TensorProto.EXTERNAL)
@@ -323,21 +394,31 @@ class ONNXCompatTest(unittest.TestCase):
         for name, sign in (('then', 1), ('else', -1)):
             tensor = onnx.numpy_helper.from_array(
                 np.array([sign, 2 * sign], dtype=np.float32), name=name + '/value')
-            branches.append(onnx.helper.make_graph([
-                onnx.helper.make_node('Constant', [], [name + '_out'], value=tensor)
-            ], name, [], [onnx.helper.make_tensor_value_info(
-                name + '_out', onnx.TensorProto.FLOAT, [2])]))
+            branches.append(
+                onnx.helper.make_graph([
+                    onnx.helper.make_node(
+                        'Constant', [], [name + '_out'], value=tensor)
+                ], name, [], [
+                    onnx.helper.make_tensor_value_info(name + '_out',
+                                                       onnx.TensorProto.FLOAT, [2])
+                ]))
         graph = onnx.helper.make_graph([
-            onnx.helper.make_node('If', ['cond'], ['y'], then_branch=branches[0],
-                                  else_branch=branches[1])
-        ], 'nested', [onnx.helper.make_tensor_value_info('cond', onnx.TensorProto.BOOL, [])],
-            [onnx.helper.make_tensor_value_info('y', onnx.TensorProto.FLOAT, [2])])
-        model = onnx.helper.make_model(graph, ir_version=10,
-                                      opset_imports=[onnx.helper.make_opsetid('', 18)])
+            onnx.helper.make_node(
+                'If', ['cond'], ['y'], then_branch=branches[0], else_branch=branches[1])
+        ], 'nested', [
+            onnx.helper.make_tensor_value_info('cond', onnx.TensorProto.BOOL, [])
+        ], [onnx.helper.make_tensor_value_info('y', onnx.TensorProto.FLOAT, [2])])
+        model = onnx.helper.make_model(
+            graph, ir_version=10, opset_imports=[onnx.helper.make_opsetid('', 18)])
         path = self.root / 'nested.onnx'
-        onnx.save_model(model, str(path), save_as_external_data=True,
-                        all_tensors_to_one_file=True, location='nested.bin',
-                        size_threshold=0, convert_attribute=True)
+        onnx.save_model(
+            model,
+            str(path),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location='nested.bin',
+            size_threshold=0,
+            convert_attribute=True)
         weights = (self.root / 'nested.bin').read_bytes()
         _load_convert(onnx, path, 22)
         self.assertEqual((self.root / 'nested.bin').read_bytes(), weights)
@@ -348,8 +429,8 @@ class ONNXCompatTest(unittest.TestCase):
                 np.array([1, 2], dtype=np.float32) * (1 if cond else -1))
 
     def test_tensor_traversal_includes_sparse_and_repeated_attributes(self):
-        from fluxhermes.exporters.onnx import (
-            _restore_external_references, _walk_tensor_protos)
+        from fluxhermes.exporters.onnx import (_restore_external_references,
+                                               _walk_tensor_protos)
         model = onnx.ModelProto()
         sparse = model.graph.sparse_initializer.add()
         sparse.values.name, sparse.indices.name = 'sparse-values', 'sparse-indices'
@@ -362,8 +443,11 @@ class ONNXCompatTest(unittest.TestCase):
         repeated.tensors.add().name = 'repeated-0'
         repeated.tensors.add().name = 'repeated-1'
         names = {value.name for value in _walk_tensor_protos(model)}
-        self.assertEqual(names, {'sparse-values', 'sparse-indices', 'attr-values',
-                                 'attr-indices', 'repeated-0', 'repeated-1'})
+        self.assertEqual(
+            names, {
+                'sparse-values', 'sparse-indices', 'attr-values', 'attr-indices',
+                'repeated-0', 'repeated-1'
+            })
         # Metadata-only tests use genuine TensorProto messages, without opening
         # any tensor storage. Numerical external-data tests are above.
         for value in _walk_tensor_protos(model):
@@ -391,8 +475,10 @@ class ONNXCompatTest(unittest.TestCase):
         entry = tensor.external_data.add()
         entry.key, entry.value = 'location', 'never-opened.bin'
         for change, expected in (
-            ('missing', '0 matches'), ('duplicate', '2 matches'),
-            ('shape', 'changed external tensor'), ('dtype', 'changed external tensor'),
+            ('missing', '0 matches'),
+            ('duplicate', '2 matches'),
+            ('shape', 'changed external tensor'),
+            ('dtype', 'changed external tensor'),
             ('payload', 'changed external tensor'),
         ):
             with self.subTest(change=change):

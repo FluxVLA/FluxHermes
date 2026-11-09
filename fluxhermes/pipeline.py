@@ -118,12 +118,10 @@ class CompilePipeline:
         return resolved
 
     def _validate_precision_configuration(self) -> None:
-        if (
-            self.config.precision == 'fp16'
-            and not bool(self.config.optimization.get('fp16_conversion', True))
-            and not bool(
-                self.config.optimization.get('graph_is_explicitly_typed', False))
-        ):
+        if (self.config.precision == 'fp16'
+                and not bool(self.config.optimization.get('fp16_conversion', True))
+                and not bool(
+                    self.config.optimization.get('graph_is_explicitly_typed', False))):
             raise ConfigurationError(
                 'FP16 requires optimization.fp16_conversion=True or a task '
                 'processor that declares graph_is_explicitly_typed=True.')
@@ -133,22 +131,34 @@ class CompilePipeline:
         self._run_id = uuid4().hex
         self._validation_result = None
         self.pipeline_manager.records.clear()
-        write_json(self.config.work_dir / 'result.json', {
-            'run_id': self._run_id, 'status': 'running',
-            'workflow_completed': False, 'numerical_passed': None,
-        })
+        write_json(
+            self.config.work_dir / 'result.json', {
+                'run_id': self._run_id,
+                'status': 'running',
+                'workflow_completed': False,
+                'numerical_passed': None,
+            })
         try:
             return self._execute()
         except Exception as error:
             validation = getattr(error, 'report', self._validation_result)
             result = {
-                'run_id': self._run_id, 'status': 'failed',
-                'workflow_completed': False,
-                'numerical_passed': (
-                    validation.get('passed') if isinstance(validation, dict) else None),
-                'error': {'type': type(error).__name__, 'message': str(error)},
-                'validation': validation,
-                'stages': self.pipeline_manager.report(),
+                'run_id':
+                self._run_id,
+                'status':
+                'failed',
+                'workflow_completed':
+                False,
+                'numerical_passed':
+                (validation.get('passed') if isinstance(validation, dict) else None),
+                'error': {
+                    'type': type(error).__name__,
+                    'message': str(error)
+                },
+                'validation':
+                validation,
+                'stages':
+                self.pipeline_manager.report(),
             }
             write_json(self.config.work_dir / 'failure.json', result)
             write_json(self.config.work_dir / 'result.json', result)
@@ -161,12 +171,18 @@ class CompilePipeline:
     def _export_in_subprocess(self):
         import subprocess
         import sys
+
         from .core.pipeline_manager import StageRecord
         report_path = self.config.work_dir / 'export-stage.json'
         process = subprocess.run([
-            sys.executable, '-B', '-m', 'fluxhermes.export_worker',
-            str(self.config.work_dir / 'resolved_config.json'), self._run_id,
-        ], check=False)
+            sys.executable,
+            '-B',
+            '-m',
+            'fluxhermes.export_worker',
+            str(self.config.work_dir / 'resolved_config.json'),
+            self._run_id,
+        ],
+                                 check=False)
         if not report_path.is_file():
             raise ConfigurationError(
                 f'Export worker exited {process.returncode} without its stage report.')
@@ -191,17 +207,17 @@ class CompilePipeline:
             self.config,
             device,
         )
-        prepared = self.pipeline_manager.run(
-            'prepare_model', task_processor.prepare_model)
+        prepared = self.pipeline_manager.run('prepare_model',
+                                             task_processor.prepare_model)
 
         codebase_name = str(self.config.codebase['type'])
         backend_name = str(self.config.backend['type'])
         ir_name = str(self.config.ir['type'])
         with FUNCTION_REWRITER.context(
-            codebase=codebase_name,
-            backend=backend_name,
-            ir=ir_name,
-            config=self.config,
+                codebase=codebase_name,
+                backend=backend_name,
+                ir=ir_name,
+                config=self.config,
         ):
             ir_path = self.pipeline_manager.run(
                 'export_ir',
@@ -229,9 +245,8 @@ class CompilePipeline:
 
         quant_mode = str(self.config.quantization.get('mode', 'none')).lower()
         if quant_mode not in {'none', 'int8'}:
-            raise ConfigurationError(
-                f'Unsupported quantization mode: {quant_mode}. '
-                'Initial support is none or int8 Q/DQ.')
+            raise ConfigurationError(f'Unsupported quantization mode: {quant_mode}. '
+                                     'Initial support is none or int8 Q/DQ.')
         if self.config.precision == 'int8' and quant_mode != 'int8':
             raise ConfigurationError(
                 'Backend precision=int8 requires quantization.mode=int8.')
@@ -257,8 +272,8 @@ class CompilePipeline:
         self._validate_precision_configuration()
 
         device = str(
-            self.config.codebase.get(
-                'device', self.config.source.get('device', 'cuda:0')))
+            self.config.codebase.get('device',
+                                     self.config.source.get('device', 'cuda:0')))
         isolated = self.config.codebase.get('isolate_export', False)
         if type(isolated) is not bool:
             raise ConfigurationError('isolate_export must be true or false.')
@@ -282,14 +297,15 @@ class CompilePipeline:
         if bool(self.config.validation.get('enabled', True)):
             if isolated:
                 task_processor = self.pipeline_manager.run(
-                    'build_reference_task_processor', build_task_processor,
-                    self.config, device)
+                    'build_reference_task_processor', build_task_processor, self.config,
+                    device)
                 prepared = self.pipeline_manager.run(
-                    'prepare_model', task_processor.prepare_model,
+                    'prepare_model',
+                    task_processor.prepare_model,
                     metadata={'role': 'reference_reload'})
                 from .validation.parity import _load_sample
-                prepared.inputs, _ = _load_sample(
-                    work_dir / 'export-inputs.npz', prepared.inputs)
+                prepared.inputs, _ = _load_sample(work_dir / 'export-inputs.npz',
+                                                  prepared.inputs)
             wrapper = backend_manager.build_wrapper(
                 backend_result.files,
                 device=device,
@@ -351,11 +367,9 @@ class CompilePipeline:
 
         bundle_files: Dict[str, str | Path] = {
             relative: source
-            for relative, source in zip(
-                backend_relative_files, backend_result.files)
+            for relative, source in zip(backend_relative_files, backend_result.files)
         }
-        bundle_files['build/resolved_config.json'] = (
-            work_dir / 'resolved_config.json')
+        bundle_files['build/resolved_config.json'] = (work_dir / 'resolved_config.json')
         if self.config.config_path is not None:
             bundle_files['build/deployment.py'] = self.config.config_path
         if bool(self.config.package.get('include_onnx', False)):
@@ -378,7 +392,8 @@ class CompilePipeline:
             json.dumps(
                 {
                     'bundle': str(bundle),
-                    'run_id': self._run_id, 'status': 'completed',
+                    'run_id': self._run_id,
+                    'status': 'completed',
                     'workflow_completed': True,
                     'numerical_passed': bool(validation.get('passed', False)),
                     'pipeline': self.pipeline_manager.report(),

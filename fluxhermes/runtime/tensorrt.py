@@ -86,9 +86,8 @@ class TensorRTEngine:
     def _check_target(self, expected: Mapping[str, Any]) -> None:
         expected_trt = expected.get('tensorrt_version')
         if expected_trt and str(expected_trt) != str(self.trt.__version__):
-            raise ArtifactError(
-                'TensorRT version mismatch: bundle was built with '
-                f'{expected_trt}, runtime has {self.trt.__version__}.')
+            raise ArtifactError('TensorRT version mismatch: bundle was built with '
+                                f'{expected_trt}, runtime has {self.trt.__version__}.')
         index = self.device.index
         if index is None:
             index = self.torch.cuda.current_device()
@@ -101,9 +100,8 @@ class TensorRTEngine:
         expected_device = expected.get('device')
         actual_device = self.torch.cuda.get_device_name(index)
         if expected_device and str(expected_device) != actual_device:
-            raise ArtifactError(
-                'GPU model mismatch: bundle was built for '
-                f'{expected_device!r}, runtime has {actual_device!r}.')
+            raise ArtifactError('GPU model mismatch: bundle was built for '
+                                f'{expected_device!r}, runtime has {actual_device!r}.')
 
     def _torch_dtype(self, dtype: Any) -> Any:
         candidates = {

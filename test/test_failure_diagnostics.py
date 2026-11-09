@@ -28,10 +28,13 @@ TORCH_AVAILABLE = importlib.util.find_spec('torch') is not None
 def numeric_report(passed=True):
     return compare_outputs({'y': np.array([1., 2.])},
                            {'y': np.array([1., 2.]) + (0 if passed else 1)},
-                           atol=0., rtol=0., min_cosine_similarity=-1.)
+                           atol=0.,
+                           rtol=0.,
+                           min_cosine_similarity=-1.)
 
 
 class CompareDiagnosticsTest(unittest.TestCase):
+
     def test_finite_metrics_are_computed_from_actual_arrays(self):
         report = numeric_report(False)
         self.assertFalse(report['passed'])
@@ -67,9 +70,15 @@ class CompareDiagnosticsTest(unittest.TestCase):
         self.assertTrue(compare_outputs(reference, reference, 0., 0., 1.)['passed'])
 
     def test_empty_or_wrong_names_have_error_and_empty_prefix(self):
-        for reference, candidate in [({}, {}), ({'y': np.ones(1)}, {}),
-                                     ({}, {'y': np.ones(1)}),
-                                     ({'y': np.ones(1)}, {'z': np.ones(1)})]:
+        for reference, candidate in [({}, {}), ({
+                'y': np.ones(1)
+        }, {}), ({}, {
+                'y': np.ones(1)
+        }), ({
+                'y': np.ones(1)
+        }, {
+                'z': np.ones(1)
+        })]:
             with self.subTest(names=(list(reference), list(candidate))):
                 with self.assertRaises(ValidationError) as caught:
                     compare_outputs(reference, candidate, 0., 0., -1.)
@@ -82,9 +91,15 @@ class CompareDiagnosticsTest(unittest.TestCase):
 
     def test_shape_failure_preserves_only_completed_output_prefix(self):
         with self.assertRaises(ValidationError) as caught:
-            compare_outputs({'first': np.ones(2), 'bad': np.ones(2), 'last': np.ones(1)},
-                            {'first': np.ones(2), 'bad': np.ones((1, 2)),
-                             'last': np.ones(1)}, 0., 0., -1.)
+            compare_outputs({
+                'first': np.ones(2),
+                'bad': np.ones(2),
+                'last': np.ones(1)
+            }, {
+                'first': np.ones(2),
+                'bad': np.ones((1, 2)),
+                'last': np.ones(1)
+            }, 0., 0., -1.)
         report = caught.exception.report
         self.assertFalse(report['passed'])
         self.assertEqual(list(report['outputs']), ['first'])
@@ -98,11 +113,17 @@ class CompareDiagnosticsTest(unittest.TestCase):
         for side in ('reference', 'candidate'):
             for value in (np.nan, np.inf, -np.inf):
                 with self.subTest(side=side, value=value):
-                    arrays = {'reference': {'y': np.ones(2)},
-                              'candidate': {'y': np.ones(2)}}
+                    arrays = {
+                        'reference': {
+                            'y': np.ones(2)
+                        },
+                        'candidate': {
+                            'y': np.ones(2)
+                        }
+                    }
                     arrays[side]['y'][0] = value
-                    report = compare_outputs(**arrays, atol=0., rtol=0.,
-                                             min_cosine_similarity=-1.)
+                    report = compare_outputs(
+                        **arrays, atol=0., rtol=0., min_cosine_similarity=-1.)
                     self.assertIs(report['passed'], False)
                     metrics = report['outputs']['y']
                     self.assertIs(metrics['finite'], False)
@@ -114,26 +135,31 @@ class CompareDiagnosticsTest(unittest.TestCase):
 
 @unittest.skipUnless(TORCH_AVAILABLE, 'Torch absent: real CPU runner tests skipped')
 class BackendExceptionDiagnosticsTest(unittest.TestCase):
+
     def setUp(self):
         import torch
         self.torch = torch
         self.prepared = PreparedModel(torch.nn.Identity(),
-                                      {'x': torch.tensor([[1., 2.]])}, ('y',))
+                                      {'x': torch.tensor([[1., 2.]])}, ('y', ))
 
     def backend(self, error=None):
+
         class CPUBackend:
+
             def infer(inner, inputs, synchronize=False):
                 if not synchronize:
                     raise AssertionError('expected synchronized validation')
                 if error is not None:
                     raise error
                 return {'y': inputs['x'].clone()}
+
         return CPUBackend()
 
     def test_real_cpu_identity_and_negative_control(self):
         self.assertTrue(validate_backend(self.prepared, self.backend(), {})['passed'])
         self.prepared.reference_runner = lambda inputs: inputs['x'] + 1
-        report = validate_backend(self.prepared, self.backend(), {'fail_on_error': False})
+        report = validate_backend(self.prepared, self.backend(),
+                                  {'fail_on_error': False})
         self.assertFalse(report['passed'])
         with self.assertRaises(ValidationError) as caught:
             validate_backend(self.prepared, self.backend(), {})
@@ -144,16 +170,22 @@ class BackendExceptionDiagnosticsTest(unittest.TestCase):
             for strict in (False, True):
                 with self.subTest(side=side, strict=strict):
                     error = LookupError('injected ' + side + ' failure')
+
                     def fail(inputs):
                         raise error
-                    self.prepared.reference_runner = fail if side == 'reference' else None
+
+                    self.prepared.reference_runner = (
+                        fail if side == 'reference' else None)
                     backend = self.backend(error if side == 'candidate' else None)
                     with self.assertRaises(LookupError) as caught:
-                        validate_backend(self.prepared, backend, {'fail_on_error': strict})
+                        validate_backend(self.prepared, backend,
+                                         {'fail_on_error': strict})
                     self.assertIs(caught.exception, error)
                     self.assertFalse(error.report['passed'])
-                    self.assertEqual(error.report['error'],
-                                     {'type': 'LookupError', 'message': str(error)})
+                    self.assertEqual(error.report['error'], {
+                        'type': 'LookupError',
+                        'message': str(error)
+                    })
                     json.dumps(error.report, allow_nan=False)
 
     def test_manifest_parse_and_schema_errors_have_reports(self):
@@ -165,9 +197,10 @@ class BackendExceptionDiagnosticsTest(unittest.TestCase):
                     with self.subTest(text=text, strict=strict):
                         path.write_text(text, encoding='utf-8')
                         with self.assertRaises(error_type) as caught:
-                            validate_backend(self.prepared, self.backend(),
-                                             {'samples_manifest': str(path),
-                                              'fail_on_error': strict})
+                            validate_backend(self.prepared, self.backend(), {
+                                'samples_manifest': str(path),
+                                'fail_on_error': strict
+                            })
                         self.assertIs(type(caught.exception), error_type)
                         report = caught.exception.report
                         self.assertFalse(report['passed'])
@@ -177,19 +210,25 @@ class BackendExceptionDiagnosticsTest(unittest.TestCase):
 
 class PipelineReportControlTest(unittest.TestCase):
     """Real execute/_execute/manager; injected non-inference stage boundaries."""
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         config_path = self.root / 'deploy.py'
-        config_path.write_text('deployment = ' + repr(dict(
-            name='cpu-report-control', work_dir=str(self.root / 'work'),
-            source=dict(type='python', device='cpu', factory='unused:factory'),
-            inputs=[dict(name='x', dtype='float32', shape=(1, 2))],
-            outputs=[dict(name='y', dtype='float32', shape=(1, 2))],
-            backend_config=dict(type='tensorrt', precision='fp32'),
-            optimization=dict(simplify=False), validation=dict(fail_on_error=False),
-        )), encoding='utf-8')
+        config_path.write_text(
+            'deployment = ' + repr(
+                dict(
+                    name='cpu-report-control',
+                    work_dir=str(self.root / 'work'),
+                    source=dict(type='python', device='cpu', factory='unused:factory'),
+                    inputs=[dict(name='x', dtype='float32', shape=(1, 2))],
+                    outputs=[dict(name='y', dtype='float32', shape=(1, 2))],
+                    backend_config=dict(type='tensorrt', precision='fp32'),
+                    optimization=dict(simplify=False),
+                    validation=dict(fail_on_error=False),
+                )),
+            encoding='utf-8')
         self.pipeline = CompilePipeline(load_config(config_path))
         self.work = self.pipeline.config.work_dir
         self.verdict = True
@@ -204,8 +243,8 @@ class PipelineReportControlTest(unittest.TestCase):
             self.running.append(self.read_report('result'))
             if self.failure == 'prepare':
                 raise LookupError('injected prepare failure')
-            return SimpleNamespace(prepare_model=lambda: self.prepared,
-                                   runtime_metadata=metadata)
+            return SimpleNamespace(
+                prepare_model=lambda: self.prepared, runtime_metadata=metadata)
 
         def metadata():
             if self.failure == 'metadata':
@@ -220,13 +259,14 @@ class PipelineReportControlTest(unittest.TestCase):
         manager = SimpleNamespace(
             to_backend=lambda *args: SimpleNamespace(files=[], metadata={}),
             build_wrapper=lambda *args, **kwargs: object())
-        replacements = dict(build_task_processor=build_processor,
-                            export_onnx=lambda *args: self.root / 'control-only.onnx',
-                            optimize_onnx=lambda path, *args: path,
-                            lower_onnx_precision=lambda path, *args: path,
-                            get_backend_manager=lambda name: manager,
-                            validate_backend=lambda *args: numeric_report(self.verdict),
-                            create_bundle=package)
+        replacements = dict(
+            build_task_processor=build_processor,
+            export_onnx=lambda *args: self.root / 'control-only.onnx',
+            optimize_onnx=lambda path, *args: path,
+            lower_onnx_precision=lambda path, *args: path,
+            get_backend_manager=lambda name: manager,
+            validate_backend=lambda *args: numeric_report(self.verdict),
+            create_bundle=package)
         for name, replacement in replacements.items():
             stack.enter_context(patch('fluxhermes.pipeline.' + name, replacement))
 
@@ -263,7 +303,8 @@ class PipelineReportControlTest(unittest.TestCase):
         failed = self.assert_failure(None)
         self.assertIsNone(failed['validation'])
         self.assertNotEqual(success['run_id'], failed['run_id'])
-        self.assertEqual([s['name'] for s in failed['stages']], ['build_task_processor'])
+        self.assertEqual([s['name'] for s in failed['stages']],
+                         ['build_task_processor'])
         for report in self.running:
             self.assert_running(report)
 
@@ -279,8 +320,11 @@ class PipelineReportControlTest(unittest.TestCase):
         self.assertTrue(result['workflow_completed'])
         self.assertNotEqual(result['run_id'], failure['run_id'])
         self.assertEqual(self.read_report('failure'), failure)
-        self.assertTrue(all(stage['status'] == 'completed' for stage in result['pipeline']))
-        self.assertEqual(len({s['name'] for s in result['pipeline']}), len(result['pipeline']))
+        self.assertTrue(
+            all(stage['status'] == 'completed' for stage in result['pipeline']))
+        self.assertEqual(
+            len({s['name']
+                 for s in result['pipeline']}), len(result['pipeline']))
         for report in self.running:
             self.assert_running(report)
 
@@ -307,17 +351,21 @@ class PipelineReportControlTest(unittest.TestCase):
             for location in ('metadata', 'package', 'after_hook'):
                 with self.subTest(verdict=verdict, location=location):
                     self.verdict, self.failure = verdict, location
+
                     def after_hook(**kwargs):
                         # The numerical report must already be saved before this hook.
-                        self.assertEqual(self.pipeline._validation_result, numeric_report(verdict))
+                        self.assertEqual(self.pipeline._validation_result,
+                                         numeric_report(verdict))
                         if self.failure == 'after_hook':
                             raise LookupError('injected after hook failure')
+
                     if location == 'after_hook':
                         self.pipeline.pipeline_manager.add_hook('validate', after_hook)
                     with self.assertRaises(LookupError):
                         self.pipeline.execute()
                     report = self.assert_failure(verdict)
-                    self.assertEqual(report['validation']['outputs'], numeric_report(verdict)['outputs'])
+                    self.assertEqual(report['validation']['outputs'],
+                                     numeric_report(verdict)['outputs'])
                     if location == 'after_hook':
                         self.assertEqual(report['stages'][-1]['name'], 'validate')
                         self.assertEqual(report['stages'][-1]['status'], 'failed')
