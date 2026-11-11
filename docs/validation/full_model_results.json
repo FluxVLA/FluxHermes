@@ -1,0 +1,507 @@
+{
+  "schema_version": 1,
+  "validated_code_commit": "91c7294dccc94bc19b932e18204bca37466036dc",
+  "conclusion": {
+    "workflow_completed": true,
+    "both_models_numerically_qualified": false,
+    "speedup_observed": false
+  },
+  "thresholds": {
+    "atol": 0.02,
+    "rtol": 0.02,
+    "min_cosine_similarity": 0.999,
+    "all_15_cases_required": true
+  },
+  "configuration": {
+    "precision": "bf16",
+    "strongly_typed": true,
+    "allow_tf32": false,
+    "isolate_export": true,
+    "tactic_dram_gib": 8,
+    "builder_optimization_level": 0,
+    "minimum_available_host_ram_gib": 4,
+    "JE_ARROW_MALLOC_CONF": "background_thread:false"
+  },
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "torch": "2.6.0+cu124",
+    "tensorrt": "10.13.3.9",
+    "cuda": "12.4",
+    "evidence": [
+      "pi05-phase-02-engine.json",
+      "pi05-trace-repeat-02.json"
+    ],
+    "scope": "GPU/TRT/CUDA from preserved PI05 phase engine metadata; Torch from JIT reports, not a new environment probe."
+  },
+  "models": {
+    "PI05": {
+      "cli": {
+        "run_id": "2bfcde4c07104e19af9c0184f8ca75d2",
+        "status": "completed",
+        "workflow_completed": true,
+        "numerical_passed": false,
+        "completed_stages": 10,
+        "automatic_packaging": true,
+        "guard": {
+          "exit_code": 0,
+          "elapsed_seconds": 551.5614647949697,
+          "max_rss_gib": 27.14141845703125,
+          "min_available_gib": 5.403282165527344,
+          "reserve_gib": 4.0,
+          "monitor_interval_s": 0.1,
+          "aborted": null
+        }
+      },
+      "fresh_api": {
+        "separate_process": true,
+        "sample_count": 15,
+        "unique_cases": 15,
+        "calls": 45,
+        "successful_executions": 45,
+        "api_worker_exit_code": 1,
+        "exit_interpretation": "Numerical matrix failure; workflow completed.",
+        "replay_bitwise_stable": true,
+        "all_calls_bitwise_equal_to_first": true,
+        "all_numpy_input_arrays_unchanged": true,
+        "input_immutability_scope": "NumPy arrays only; internal CUDA buffers not checked",
+        "native_model_modules_loaded": [],
+        "directions": [
+          "forward",
+          "reverse"
+        ],
+        "stream_is_default": true,
+        "negative_tests": {
+          "invalid_shape_public_CPU_TensorSpec": {
+            "exception": "ConfigurationError",
+            "message": "Invalid tensor shape: (0,)",
+            "passed": true
+          },
+          "missing_input_public_predict": {
+            "exception": "ValueError",
+            "message": "Engine inputs mismatch: missing=['images'], unknown=[]",
+            "passed": true
+          }
+        }
+      },
+      "gates_and_integrity": {
+        "default_gate": {
+          "passed": true,
+          "exit_code": 2
+        },
+        "default_policy_gate": {
+          "passed": true,
+          "exception": "ArtifactError"
+        },
+        "integrity_negative": {
+          "passed": true,
+          "exception": "ArtifactError"
+        },
+        "corrupted_engine_negative": {
+          "passed": true,
+          "exception": "ArtifactError"
+        },
+        "diagnostic_allow_unvalidated": true,
+        "source_bundle_integrity_rechecked": true,
+        "gate_evidence_limit": "CLI gate error and no output plus code inspection; no GPU trace instrumentation.",
+        "corruption_scope": "64-byte truncated derived engine; original manifest checksum retained",
+        "checksum_coverage_scope": "Public checksum-coverage validation, metadata-only derived manifest"
+      },
+      "numerical": {
+        "qualified": false,
+        "passed_cases": 0,
+        "failed_cases": 15,
+        "passed_calls": 0,
+        "all_outputs_finite": true,
+        "worst_by_max_abs_error": {
+          "id": "O4-S7",
+          "max_abs_error": 5.49517822265625,
+          "max_rel_error": 332.56595559425335,
+          "cosine_similarity": 0.47518382074528764
+        },
+        "minimum_cosine_similarity": 0.47518382074528764,
+        "case_pass_ids": []
+      },
+      "benchmark": {
+        "cli_exit_code": 0,
+        "native": {
+          "warmup": 10,
+          "repeats": 100,
+          "mean_ms": 122.37742656492628,
+          "p50_ms": 122.27056798292324,
+          "p90_ms": 122.83351400401443,
+          "p99_ms": 125.19735301611945,
+          "min_ms": 121.17817800026387,
+          "max_ms": 130.35790697904304
+        },
+        "tensorrt": {
+          "max_ms": 189.28483698982745,
+          "mean_ms": 187.58577060187235,
+          "min_ms": 186.8538890266791,
+          "p50_ms": 187.29268002789468,
+          "p90_ms": 188.37409699335694,
+          "p99_ms": 188.7992619886063,
+          "repeats": 100,
+          "warmup": 10
+        },
+        "native_over_tensorrt": 0.6523811810047003,
+        "speedup_observed": false,
+        "native_golden_bitwise_equal": true
+      },
+      "diagnostic_cli_run": {
+        "exit_code": 0,
+        "numerical_passed": false
+      },
+      "evidence": [
+        "pi05-cli06-result.json",
+        "pi05-cli06-guard.json",
+        "pi05-bundle06-report.json",
+        "pi05-bundle06-api.json",
+        "pi05-native-benchmark-06.json"
+      ]
+    },
+    "GR00T_N1.7": {
+      "cli": {
+        "run_id": "56cca14e71d7476dbb557aad0049c127",
+        "status": "completed",
+        "workflow_completed": true,
+        "numerical_passed": false,
+        "completed_stages": 10,
+        "automatic_packaging": true,
+        "guard": {
+          "exit_code": 0,
+          "elapsed_seconds": 275.04177778901067,
+          "max_rss_gib": 24.637210845947266,
+          "min_available_gib": 8.126537322998047,
+          "reserve_gib": 4.0,
+          "monitor_interval_s": 0.1,
+          "aborted": null
+        }
+      },
+      "fresh_api": {
+        "separate_process": true,
+        "sample_count": 15,
+        "unique_cases": 15,
+        "calls": 45,
+        "successful_executions": 45,
+        "api_worker_exit_code": 1,
+        "exit_interpretation": "Numerical matrix failure; workflow completed.",
+        "replay_bitwise_stable": true,
+        "all_calls_bitwise_equal_to_first": true,
+        "all_numpy_input_arrays_unchanged": true,
+        "input_immutability_scope": "NumPy arrays only; internal CUDA buffers not checked",
+        "native_model_modules_loaded": [],
+        "directions": [
+          "forward",
+          "reverse"
+        ],
+        "stream_is_default": true,
+        "negative_tests": {
+          "invalid_shape_public_CPU_TensorSpec": {
+            "exception": "ConfigurationError",
+            "message": "Invalid tensor shape: (0,)",
+            "passed": true
+          },
+          "missing_input_public_predict": {
+            "exception": "ValueError",
+            "message": "Engine inputs mismatch: missing=['images'], unknown=[]",
+            "passed": true
+          }
+        }
+      },
+      "gates_and_integrity": {
+        "default_gate": {
+          "passed": true,
+          "exit_code": 2
+        },
+        "default_policy_gate": {
+          "passed": true,
+          "exception": "ArtifactError"
+        },
+        "integrity_negative": {
+          "passed": true,
+          "exception": "ArtifactError"
+        },
+        "corrupted_engine_negative": {
+          "passed": true,
+          "exception": "ArtifactError"
+        },
+        "diagnostic_allow_unvalidated": true,
+        "source_bundle_integrity_rechecked": true,
+        "gate_evidence_limit": "CLI gate error and no output plus code inspection; no GPU trace instrumentation.",
+        "corruption_scope": "64-byte truncated derived engine; original manifest checksum retained",
+        "checksum_coverage_scope": "Public checksum-coverage validation, metadata-only derived manifest"
+      },
+      "numerical": {
+        "qualified": false,
+        "passed_cases": 7,
+        "failed_cases": 8,
+        "passed_calls": 21,
+        "all_outputs_finite": true,
+        "worst_by_max_abs_error": {
+          "id": "o4-s29",
+          "max_abs_error": 0.595703125,
+          "max_rel_error": 83.04131139418213,
+          "cosine_similarity": 0.9997663872381682
+        },
+        "minimum_cosine_similarity": 0.9997663872381682,
+        "case_pass_ids": [
+          "o2-s17",
+          "o2-s29",
+          "o3-s7",
+          "o3-s17",
+          "o3-s29",
+          "o4-s7",
+          "o4-s17"
+        ]
+      },
+      "benchmark": {
+        "cli_exit_code": 0,
+        "native": {
+          "warmup": 10,
+          "repeats": 100,
+          "mean_ms": 70.3780734090833,
+          "p50_ms": 70.3485049889423,
+          "p90_ms": 70.81495795864612,
+          "p99_ms": 71.12483098171651,
+          "min_ms": 69.58429701626301,
+          "max_ms": 71.27087301341817
+        },
+        "tensorrt": {
+          "max_ms": 111.95699201198295,
+          "mean_ms": 111.20997015968896,
+          "min_ms": 111.00769997574389,
+          "p50_ms": 111.1412649624981,
+          "p90_ms": 111.46698001539335,
+          "p99_ms": 111.94947100011632,
+          "repeats": 100,
+          "warmup": 10
+        },
+        "native_over_tensorrt": 0.6328396033919063,
+        "speedup_observed": false,
+        "native_golden_bitwise_equal": true
+      },
+      "diagnostic_cli_run": {
+        "exit_code": 0,
+        "numerical_passed": false
+      },
+      "evidence": [
+        "n17-cli04-result.json",
+        "n17-cli04-guard.json",
+        "n17-bundle04-report.json",
+        "n17-bundle04-api.json",
+        "n17-native-benchmark-04.json"
+      ],
+      "model_input_sequence_lengths": [
+        138,
+        142,
+        148,
+        151,
+        180
+      ]
+    }
+  },
+  "shared_boundaries": {
+    "shape_negative_scope": "CPU TensorSpec schema rejection; no claim of a public CPU runtime array-shape validator",
+    "input_boundary": "Model-ready NumPy tensors. N1.7 common-left-padding trimming was performed by original host preprocessing when creating cases, not by the identity deployment host adapter.",
+    "timing": "Same representative observation2/seed7 input, 10 warmups and 100 timed calls; NumPy-to-device conversion, binding, model inference and per-call CUDA synchronization; preprocessing and model load excluded",
+    "performance_limit": "Representative observation2/seed7 only; existing current/default stream. No end-to-end preprocessing or loading speedup claim."
+  },
+  "pi05_jit_controls": [
+    {
+      "control": "fresh_default_optimized",
+      "cases": 15,
+      "passed": 1,
+      "max_abs_error": 5.473476409912109,
+      "jit_optimization_enabled": true,
+      "jit_autocast_disabled": false,
+      "evidence": "pi05-trace-repeat-02.json"
+    },
+    {
+      "control": "optimization_disabled",
+      "cases": 15,
+      "passed": 15,
+      "max_abs_error": 0.0,
+      "jit_optimization_enabled": false,
+      "evidence": "pi05-trace-noopt-01.json"
+    },
+    {
+      "control": "autocast_only_disabled",
+      "cases": 15,
+      "passed": 1,
+      "max_abs_error": 5.473476409912109,
+      "jit_optimization_enabled": true,
+      "jit_autocast_disabled": true,
+      "evidence": "pi05-trace-noautocast-01.json"
+    },
+    {
+      "control": "fusion_disabled_other_optimization_enabled",
+      "cases": 15,
+      "passed": 15,
+      "max_abs_error": 0.0,
+      "jit_optimization_enabled": true,
+      "jit_autocast_disabled": false,
+      "fuser_state": {
+        "cpu": false,
+        "gpu": false,
+        "texpr": false
+      },
+      "evidence": "pi05-trace-nofusion-01.json"
+    }
+  ],
+  "pi05_localization_conclusion": "On these cases, trace capture reproduces the original reference exactly; drift in optimized TorchScript is isolated to its fusion-enabled execution path, not solved by disabling JIT autocast. This does not establish that TensorRT drift has the identical cause, nor identify one fused operator. No model math or thresholds were changed.",
+  "preserved_assets": {
+    "evidence": "preserved-assets-final-01.json",
+    "passed": true,
+    "checks": 727,
+    "original_source_revision": "249531b78ee922757a6e4b56d2f5965487f9f0fc",
+    "selected_digests": [
+      {
+        "asset": "FluxVLA/configs/gr00tn17/gr00tn17_qwen3vl_2b_libero_10_full_finetune.py",
+        "sha256": "3b340040cb242d5e234977c3f8c565fd20401a046a67cb78d03f02ebbf68fd91",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "FluxVLA/configs/pi05/pi05_paligemma_libero_10_full_finetune.py",
+        "sha256": "4a5655cd710c2594b37a8866336d9243da128ae2593c2b5b2b6da0ffdae91acc",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "FluxVLA/fluxvla/models/vlas/groot_n17_vla.py",
+        "sha256": "0dd59cf2b9de3c68da2be9aceb452809081f95add26d935e8fa7dc3116a8dcca",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "FluxVLA/fluxvla/models/vlas/pi05_flowmatching.py",
+        "sha256": "14721dfed9c6b3c10f573376aaac099f0d1b23e1b3203626370e56f31f12e0ef",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "FluxVLA/fluxvla/models/vlas/pi05_flowmatching_inference.py",
+        "sha256": "ef51954adc9434d615adb6dee5bdb11873967fdd07bc276a92331daf975bf64a",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "PI05/checkpoint/step-038064-epoch-24-loss=0.0170.safetensors",
+        "sha256": "4a79542cbb79b75deea3804d91f87f9c2180ff704f0cd1988469ee72655fbe15",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "GR00T_N1.7/checkpoint/model-00001-of-00002.safetensors",
+        "sha256": "39b7beaadd9a06c87502f2b741a36f939b84941f37fef757c6177e54e34a5eff",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "GR00T_N1.7/checkpoint/embodiment_id.json",
+        "git_blob_sha1": "907dd5cd22ee3b17b24146d86090bfee694efd25",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "GR00T_N1.7/checkpoint/model.safetensors.index.json",
+        "git_blob_sha1": "4761851d9515098ac203474f61221a26cd3a98b6",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "GR00T_N1.7/checkpoint/statistics.json",
+        "git_blob_sha1": "cd2c2165a310c4d97484cf63b68e3c7f55d328f3",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "GR00T_N1.7/checkpoint/processor_config.json",
+        "git_blob_sha1": "bcbf138a69c57e445e79fe8e76e84b39f11d25ab",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "GR00T_N1.7/checkpoint/config.json",
+        "git_blob_sha1": "b56fe951e6a36ec714cf35978287b28940f3fc9d",
+        "matches_preserved_expected": true
+      },
+      {
+        "asset": "GR00T_N1.7/checkpoint/model-00002-of-00002.safetensors",
+        "sha256": "8c4fa56f1b4f25a1a842c811e8a12d2bf6d77d73942f9a04f5b876a11bd6d703",
+        "matches_preserved_expected": true
+      }
+    ],
+    "scope": "Digests transcribed from preserved integrity evidence, not independent rehashes of original source/checkpoints in this review. Revision is as reported, not independently verified against Git.",
+    "final_bundles": [
+      {
+        "bundle": "pi05-06",
+        "files": {
+          "backend/model.plan": "38500ddf870b4ebc96fde1f0cdefb4a4c7b765496d86c995f7aca4e450d1af61",
+          "build/deployment.py": "c7c27c9f876943749c9b44cc4828a4cae4cd7c2e9a916c6bd7d54e17a2362a58",
+          "build/resolved_config.json": "0613371db3273ac96bd6cfde22178f315a1dafe6bac3a9286e70687e8b8db0cb"
+        },
+        "integrity_passed": true,
+        "numerical_passed": false
+      },
+      {
+        "bundle": "gr00t-n17-04",
+        "files": {
+          "backend/model.plan": "5fee0125d60e6e609502cde1e73e18b8f91a7743443321fc52df96a29cc2123e",
+          "build/deployment.py": "a1e217b8a623722286981c1f8b21bba8e83d1123797b7dc95c7b5655a0db4392",
+          "build/resolved_config.json": "d6ad6fd10d2ab6d979cccd9a8ef11f166c422a5a9cfad1ee6f62fe9ec8090515"
+        },
+        "integrity_passed": true,
+        "numerical_passed": false
+      }
+    ]
+  },
+  "production_source": [
+    {
+      "path": "fluxhermes/builders/tensorrt.py",
+      "sha256": "b896f95a988d62bd128eff35269502a967981c7e46639e75a6d72ed80c787b2e",
+      "independently_hashed_local_source": true,
+      "matches_gpu_validated_source": true
+    },
+    {
+      "path": "fluxhermes/export_worker.py",
+      "sha256": "e864cc6db440e136942df2f3c1a12c434cbbc4293107bbfdb703f1e5c17097f4",
+      "independently_hashed_local_source": true,
+      "matches_gpu_validated_source": true
+    },
+    {
+      "path": "fluxhermes/pipeline.py",
+      "sha256": "b6507968c71c5f3f0bb93002eab3577e5ddd6d637e6fcf9bf0f67f4609511620",
+      "independently_hashed_local_source": true,
+      "matches_gpu_validated_source": true
+    }
+  ],
+  "unknowns_and_limits": [
+    "Numerical qualification failed for both models; production readiness and robot-task success are not established.",
+    "Specific fused operator and equivalence of TorchScript and TensorRT drift causes remain unresolved.",
+    "Internal CUDA input buffers were not checked for immutability.",
+    "Original assets were not locally rehashed; preservation claims rely on the identified report.",
+    "No speedup observed on the matched timing boundary; results do not measure preprocessing or loading."
+  ],
+  "reports_sha256": {
+    "acceptance-results.json": "9b6bba2f3d71b7f12700f94fed91b927607856b3e91dc46540b1c7cc0d2cd787",
+    "pi05-phase-02-engine.json": "663be96fa26519d63f7056ebb127fbeb758b0b8d50dac557d0656cf8c55b14ef",
+    "pi05-trace-repeat-02.json": "b91690be8be2a541b5948a8f132e5548fca9a4dd6d90cf386e3b9439272a77ed",
+    "pi05-cli06-result.json": "8ea8a13f7f807fe20e006150413f14eaea92fd01e56eb087448672962cd10c29",
+    "pi05-cli06-guard.json": "9baff9b341553f3e6ad5a5f8698e2691284892998d5622fc765b9574659072fd",
+    "pi05-bundle06-report.json": "956a834f45e87d15d58f9af649d7f3f09c1ddf5d5818c9ea67e549f7d213644a",
+    "pi05-bundle06-api.json": "b23890bcd4bfdbefe94b90f28a0e0369c6abcfe339d515f1f32ca0cce780a904",
+    "pi05-native-benchmark-06.json": "d83ad8597eeb4093ff1b277b609c877709a78f92bb07d2ec7c003cbbc4347a47",
+    "n17-cli04-result.json": "5320b15f4927cfbe33416592ee922f98fe5713c807ac274c9a846048cb537e1e",
+    "n17-cli04-guard.json": "9a484c68ded8ea070b671449fcaec6c922f9e926a6f6abdc29b098c4538af719",
+    "n17-bundle04-report.json": "2748a362c172611f3d1d70cc91091f91ebd64eb6ed2223074a5ba16807f7b4a6",
+    "n17-bundle04-api.json": "9f04a4474262605dc1a06b3a5f27814a0cedc932c5927eb4cd7fe301856e58a2",
+    "n17-native-benchmark-04.json": "23920da6ef19ab0ac5212efe688852ceaa3fb067e3a8e45207674c86702828be",
+    "pi05-trace-noopt-01.json": "2cd4559674c3b0374586e1ec47ae470900db2abd1fbf5bcbe2fbbfd712af99ac",
+    "pi05-trace-noautocast-01.json": "cf63986d5e63fa7182c5fb8e674def194d67c2b33a0a0ef8fc3b6924e07b4e14",
+    "pi05-trace-nofusion-01.json": "b1e01053d94a6f9ccd1d8955648b87e3824b5e53ab5628306f31d8c84c1c3e34",
+    "preserved-assets-final-01.json": "bdfa974e72ac52d5b8c68e2a16c3536aa41016e2668d8340771e830c69dbc3ee",
+    "regression-08.log": "da053d4db6265c410c4ed6a593075534719da3e8fe17fc0ae3a9ab5a73af1939"
+  },
+  "delivery_checks": {
+    "local_regression": {
+      "passed": 96,
+      "skipped_gpu_only": 3
+    },
+    "gpu_enabled_regression": {
+      "passed": 99,
+      "report": "regression-08.log"
+    },
+    "fixture_generators": "reproduction_check.json",
+    "reproduction_instructions": "reproduce.rst"
+  }
+}
