@@ -25,11 +25,18 @@ def main():
         processor, prepared, graph_path = pipeline._prepare_ir(device)
         import numpy as np
         arrays = {}
+        import torch
+        state['input_dtypes'] = {}
         for name, value in prepared.inputs.items():
-            if not hasattr(value, 'detach'):
+            if not isinstance(value, torch.Tensor):
                 raise TypeError(
                     'Isolated export requires tensor representative inputs.')
-            arrays[name] = value.detach().cpu().numpy()
+            state['input_dtypes'][name] = str(value.dtype)
+            # Every BF16 value is exactly representable in FP32; NumPy lacks BF16.
+            value = value.detach().cpu()
+            if value.dtype == torch.bfloat16:
+                value = value.float()
+            arrays[name] = value.numpy()
         np.savez(config.work_dir / 'export-inputs.npz', **arrays)
         metadata = dict(prepared.metadata)
         metadata.update(processor.runtime_metadata())

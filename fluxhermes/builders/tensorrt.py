@@ -118,6 +118,18 @@ def build_tensorrt_engine(
         descriptor_limit = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
     if 'allow_tf32' in options and type(options['allow_tf32']) is not bool:
         raise ConfigurationError('TensorRT allow_tf32 must be true or false.')
+    optimization_level = options.get('builder_optimization_level')
+    if optimization_level is not None and (type(optimization_level) is not int
+                                           or not 0 <= optimization_level <= 5):
+        raise ConfigurationError(
+            'builder_optimization_level must be an integer in [0, 5].')
+    tactic_dram_gib = options.get('tactic_dram_size_gib')
+    if tactic_dram_gib is not None:
+        import math
+        if (type(tactic_dram_gib) not in (int, float)
+                or not math.isfinite(tactic_dram_gib) or tactic_dram_gib <= 0):
+            raise ConfigurationError(
+                'tactic_dram_size_gib must be a finite positive number.')
     try:
         import tensorrt as trt
     except Exception as error:
@@ -151,6 +163,14 @@ def build_tensorrt_engine(
         errors = [str(parser.get_error(index)) for index in range(parser.num_errors)]
         raise RuntimeError('TensorRT ONNX parse failed:\n' + '\n'.join(errors))
     build_config = builder.create_builder_config()
+    if optimization_level is not None:
+        if not hasattr(build_config, 'builder_optimization_level'):
+            raise ConfigurationError(
+                'This TensorRT build does not expose optimization levels.')
+        build_config.builder_optimization_level = optimization_level
+        if build_config.builder_optimization_level != optimization_level:
+            raise ConfigurationError(
+                'TensorRT did not apply the requested optimization level.')
     if 'allow_tf32' in options:
         tf32_flag = getattr(trt.BuilderFlag, 'TF32', None)
         if tf32_flag is None:
@@ -164,6 +184,16 @@ def build_tensorrt_engine(
     workspace_gib = float(options.get('workspace_size_gib', 8))
     build_config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE,
                                        int(workspace_gib * (1024**3)))
+    if tactic_dram_gib is not None:
+        pool = getattr(trt.MemoryPoolType, 'TACTIC_DRAM', None)
+        if pool is None:
+            raise ConfigurationError(
+                'This TensorRT version does not expose TACTIC_DRAM.')
+        limit = int(tactic_dram_gib * 1024**3)
+        build_config.set_memory_pool_limit(pool, limit)
+        if build_config.get_memory_pool_limit(pool) != limit:
+            raise ConfigurationError(
+                'TensorRT did not apply the requested tactic DRAM limit.')
     if not strongly_typed:
         _set_weak_precision(build_config, builder, trt, precision)
     if not strongly_typed and bool(options.get('strict_types', False)):
@@ -202,6 +232,10 @@ def build_tensorrt_engine(
             trt.BuilderFlag, 'TF32') else None),
         'workspace_size_gib':
         workspace_gib,
+        'tactic_dram_size_gib':
+        tactic_dram_gib,
+        'builder_optimization_level':
+        getattr(build_config, 'builder_optimization_level', None),
         'timing_cache':
         str(timing_cache_path),
     }

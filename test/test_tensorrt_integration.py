@@ -39,7 +39,11 @@ class TensorRTIntegrationTests(unittest.TestCase):
                     precision='bf16',
                     strongly_typed=True,
                     allow_tf32=False,
-                    workspace_size_gib=0.25))
+                    workspace_size_gib=0.25,
+                    tactic_dram_size_gib=1,
+                    builder_optimization_level=0))
+            self.assertEqual(details['tactic_dram_size_gib'], 1)
+            self.assertEqual(details['builder_optimization_level'], 0)
             self.assertTrue(details['strongly_typed'])
             self.assertFalse(details['allow_tf32'])
             runtime = TensorRTEngine(root / 'model.engine')

@@ -303,6 +303,12 @@ class CompilePipeline:
                     'prepare_model',
                     task_processor.prepare_model,
                     metadata={'role': 'reference_reload'})
+                if {
+                        name: str(value.dtype)
+                        for name, value in prepared.inputs.items()
+                } != export_state['input_dtypes']:
+                    raise ConfigurationError(
+                        'Reference reload changed the representative input contract.')
                 from .validation.parity import _load_sample
                 prepared.inputs, _ = _load_sample(work_dir / 'export-inputs.npz',
                                                   prepared.inputs)
