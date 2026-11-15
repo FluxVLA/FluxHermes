@@ -1,8 +1,12 @@
-"""N1.7 two-view LIBERO, original weights and externally prepared boundaries.
+"""FluxVLAEngine N1.7 LIBERO-10 training checkpoint; BF16 native evaluation.
 
+GROOT_N17_CONFIG is the saved training config.json; GROOT_N17_CHECKPOINT is
+its original .safetensors file, not an NVIDIA checkpoint directory. Source:
+https://huggingface.co/limxdynamics/FluxVLAEngine/tree/main/gr00t_n17_native_libero_10_full_finetune_bs64
+The old saved backbone config reuses FluxVLA's native N1.7 architecture config.
 Required env: FLUXVLA_ROOT, GROOT_N17_CONFIG, GROOT_N17_CHECKPOINT,
 GROOT_N17_DEPLOY_SAMPLE, GROOT_N17_WORK_DIR, GROOT_N17_BUNDLE_DIR,
-GROOT_N17_VALIDATION_MANIFEST. Length range covers Lead's 138..180 probes.
+GROOT_N17_VALIDATION_MANIFEST. Deployment token-length range: 138..180.
 Set validation.fail_on_error=False explicitly for diagnostic failed bundles;
 the default validation and unverified-runtime gates remain enabled.
 """
@@ -10,7 +14,7 @@ the default validation and unverified-runtime gates remain enabled.
 deployment = dict(
     name='gr00t-n17-libero-bf16', work_dir='$GROOT_N17_WORK_DIR',
     codebase_config=dict(
-        type='python', task='custom', device='cuda:0',
+        type='python', task='custom', device='cuda:0', isolate_export=True,
         source=dict(
             type='python',
             factory='fluxhermes.adapters.groot_n17:prepare_groot_n17',
@@ -38,7 +42,8 @@ deployment = dict(
     backend_config=dict(
         type='tensorrt', precision='bf16', strongly_typed=True,
         allow_tf32=False, workspace_size_gib=2, log_level='warning',
-        file_descriptor_limit=4096),
+        file_descriptor_limit=4096,
+        builder_optimization_level=0, tactic_dram_size_gib=8),
     validation=dict(
         enabled=True, atol=0.02, rtol=0.02, min_cosine_similarity=0.999,
         fail_on_error=True, samples_manifest='$GROOT_N17_VALIDATION_MANIFEST'),

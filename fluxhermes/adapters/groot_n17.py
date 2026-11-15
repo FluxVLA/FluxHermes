@@ -86,6 +86,107 @@ def _verify_attention(vlm, mode):
     return found
 
 
+def _native_model_config(cfg, root):
+    """Restore published native configs without their training-machine assets."""
+    from mmengine.config import Config
+    model_cfg = copy.deepcopy(cfg.get('inference_model', cfg.model))
+    if model_cfg.get('type') != 'GrootN17VLA':
+        raise ConfigurationError('Expected a FluxVLA GrootN17VLA training config.')
+    flat = 'vlm_backbone' not in model_cfg
+    removed_model = {}
+    if flat:
+        if 'vla_head' in model_cfg:
+            raise ConfigurationError(
+                'Incomplete N1.7 component config: missing vlm_backbone.')
+        for name, expected in dict(
+                assembly_runtime='native',
+                load_mode='native_safe',
+                processor_runtime='native').items():
+            if model_cfg.get(name) != expected:
+                raise ConfigurationError(f'Unsupported legacy model.{name}.')
+            removed_model[name] = model_cfg.pop(name)
+        locator = model_cfg.pop('backbone_model_path', None)
+        removed_model['backbone_model_path'] = locator
+    else:
+        locator = model_cfg['vlm_backbone'].get('model_name')
+    architecture_source = None
+    if flat or 'model_config' not in model_cfg['vlm_backbone']:
+        if not isinstance(locator, str) or Path(locator).name != 'Cosmos-Reason2-2B':
+            raise ConfigurationError(
+                'Missing backbone model_config; expected the saved '
+                'Cosmos-Reason2-2B config.')
+        # Reuse FluxVLA's architecture declaration, not pretrained model files.
+        architecture_source = root / (
+            'configs/gr00tn17/gr00tn17_qwen3vl_2b_libero_10_full_finetune.py')
+        canonical = Config.fromfile(str(architecture_source))
+        if flat:
+            model_cfg['vlm_backbone'] = copy.deepcopy(canonical.model.vlm_backbone)
+            model_cfg['vla_head'] = copy.deepcopy(canonical.model.vla_head)
+            model_cfg['vlm_backbone'].update(
+                use_flash_attention=model_cfg.get('use_flash_attention'),
+                qwen3_runtime=model_cfg.get('qwen3_runtime'))
+        else:
+            model_cfg['vlm_backbone']['model_config'] = copy.deepcopy(
+                canonical.model.vlm_backbone.model_config)
+    backbone = model_cfg['vlm_backbone']
+    if (backbone.get('type') != 'GrootN17Qwen3Backbone'
+            or type(backbone.get('use_flash_attention')) is not bool):
+        raise ConfigurationError(
+            'Expected native Qwen3 backbone and boolean attention flag.')
+    legacy_values = dict(
+        transformers_loading_kwargs=dict(local_files_only=True, trust_remote_code=True),
+        trainable_params_fp32=False,
+        tune_llm=False,
+        tune_top_llm_layers=0,
+        tune_visual=False)
+    removed = {}
+    for name in ('model_name', *legacy_values):
+        if name not in backbone:
+            continue
+        value = backbone[name]
+        if name == 'model_name':
+            valid = isinstance(value, str) and Path(value).name == 'Cosmos-Reason2-2B'
+        else:
+            expected = legacy_values[name]
+            if isinstance(expected, dict):
+                valid = isinstance(value, dict) and value == expected
+            elif isinstance(expected, bool):
+                # These flags controlled training, not the BF16 evaluation dtype.
+                valid = type(value) is bool
+            else:
+                valid = type(value) is type(expected) and value == expected
+        if not valid:
+            raise ConfigurationError(
+                f'Unsupported saved vlm_backbone.{name}: {value!r}')
+        removed[name] = backbone.pop(name)
+    model_cfg.update(
+        model_path=None,
+        processor_path=None,
+        load_metadata=False,
+        load_pretrained_weights=False)
+    return model_cfg, dict(
+        architecture_source=str(architecture_source) if architecture_source else None,
+        removed_legacy_model_options=removed_model,
+        removed_legacy_backbone_options=removed,
+        disabled_pretrained_loading=True)
+
+
+def _native_checkpoint_keys(state_dict):
+    """Adapt the old backbone attribute name in memory; retain original tensors."""
+    result, renamed = {}, 0
+    for key, value in state_dict.items():
+        target = key
+        for prefix in ('vlm_backbone.', 'n17_backbone.'):
+            if key.startswith(prefix + 'model.'):
+                target = prefix + 'vlm.' + key[len(prefix + 'model.'):]
+                break
+        if target in result:
+            raise ConfigurationError(f'Conflicting checkpoint aliases for {target}.')
+        result[target] = value
+        renamed += target != key
+    return result, renamed
+
+
 def _set_attention(vlm, mode):
     vlm.set_attn_implementation(mode)
     return _verify_attention(vlm, mode)
@@ -134,24 +235,28 @@ def _make_wrapper(model, torch):
     return Boundary().eval()
 
 
-def _reference_runner(wrapper, specs, torch):
+def _reference_runner(wrapper, specs, torch, attention_mode='sdpa'):
 
     def run(inputs):
         _check_inputs(inputs, specs)
         vlm = wrapper.model.vlm_backbone.vlm
         try:
-            _set_attention(vlm, 'flash_attention_2')
+            if attention_mode != 'sdpa':
+                _set_attention(vlm, attention_mode)
+            else:
+                _verify_attention(vlm, 'sdpa')
             with torch.inference_mode():
                 return wrapper(*(inputs[name] for name in _NAMES))
         finally:
-            _set_attention(vlm, 'sdpa')
+            if attention_mode != 'sdpa':
+                _set_attention(vlm, 'sdpa')
 
     return run
 
 
 def prepare_groot_n17(*, deployment, device, fluxvla_root, config, checkpoint,
                       sample_inputs):
-    """Single shared CUDA BF16 model; factory kwargs are intentionally closed.
+    """Load the native FluxVLAEngine training checkpoint, not official GR00T shards.
 
     NPZ is prepared externally using the original backbone's
     _trim_common_left_padding and vlm.model.get_rope_index. No RoPE/trim
@@ -161,7 +266,7 @@ def prepare_groot_n17(*, deployment, device, fluxvla_root, config, checkpoint,
     import torch
     specs = _check_specs(deployment)
     if torch.device(device).type != 'cuda':
-        raise ConfigurationError('N1.7 factory requires CUDA for native FA2 reference.')
+        raise ConfigurationError('N1.7 deployment factory requires CUDA.')
     root = Path(fluxvla_root).expanduser().resolve()
     if not (root / 'fluxvla').is_dir():
         raise ConfigurationError(f'Invalid FluxVLA root: {root}')
@@ -177,6 +282,9 @@ def prepare_groot_n17(*, deployment, device, fluxvla_root, config, checkpoint,
     for path in (config_path, checkpoint_path, sample_path):
         if not path.exists():
             raise ConfigurationError(f'N1.7 source path not found: {path}')
+    if not checkpoint_path.is_file() or checkpoint_path.suffix != '.safetensors':
+        raise ConfigurationError('Expected a FluxVLAEngine training .safetensors file, '
+                                 'not an official directory.')
     with np.load(sample_path, allow_pickle=False) as archive:
         inputs = {name: archive[name] for name in archive.files}
     _check_inputs(inputs, specs)
@@ -184,15 +292,34 @@ def prepare_groot_n17(*, deployment, device, fluxvla_root, config, checkpoint,
     from fluxvla.engines import build_vla_from_cfg
     from mmengine.config import Config
     cfg = Config.fromfile(str(config_path))
-    model_cfg = copy.deepcopy(cfg.model)
-    model_cfg['model_path'] = str(checkpoint_path)
+    model_cfg, config_normalization = _native_model_config(cfg, root)
     torch.backends.cuda.matmul.allow_tf32 = False
     model = build_vla_from_cfg(model_cfg)
-    model.from_pretrained()
+    unknown = set(
+        model.extra_cfg) - {'state_dropout_prob', 'reproject_vision', 'load_bf16'}
+    if unknown:
+        raise ConfigurationError(f'Unknown N1.7 model options: {sorted(unknown)}')
+    head_options = set(vars(model._native_n17_config())) | {
+        'type', 'tune_diffusion_model', 'tune_projector', 'tune_vlln'
+    }
+    unknown = set(model_cfg['vla_head']) - head_options
+    if unknown:
+        raise ConfigurationError(f'Unknown N1.7 vla_head options: {sorted(unknown)}')
+    from safetensors.torch import load_file
+    state_dict = load_file(str(checkpoint_path), device='cpu')
+    checkpoint_dtypes = sorted({str(value.dtype) for value in state_dict.values()})
+    state_dict, renamed_checkpoint_keys = _native_checkpoint_keys(state_dict)
+    # Native loading owns outer n17_* remapping and lazy/meta materialization.
+    model.load_state_dict(state_dict, strict=True)
+    del state_dict
+    # Match FluxVLA's BF16 evaluation; the input checkpoint stays untouched.
     model.eval().to(device, dtype=torch.bfloat16)
     vlm = model.vlm_backbone.vlm
-    _verify_attention(vlm, 'flash_attention_2')
-    attention_modules = _set_attention(vlm, 'sdpa')
+    reference_attention = ('flash_attention_2' if
+                           model_cfg['vlm_backbone']['use_flash_attention'] else 'sdpa')
+    attention_modules = _verify_attention(vlm, reference_attention)
+    if reference_attention != 'sdpa':
+        _set_attention(vlm, 'sdpa')
     wrapper = _make_wrapper(model, torch).to(device)
     inputs = {name: torch.from_numpy(inputs[name]).to(device) for name in _NAMES}
     return PreparedModel(
@@ -207,7 +334,7 @@ def prepare_groot_n17(*, deployment, device, fluxvla_root, config, checkpoint,
                 2: 'sequence_length'
             }
         },
-        reference_runner=_reference_runner(wrapper, specs, torch),
+        reference_runner=_reference_runner(wrapper, specs, torch, reference_attention),
         metadata=dict(
             adapter='groot_n17',
             fluxvla_root=str(root),
@@ -215,16 +342,19 @@ def prepare_groot_n17(*, deployment, device, fluxvla_root, config, checkpoint,
             checkpoint=str(checkpoint_path),
             sample_inputs=str(sample_path),
             implementation=(
-                'Config.fromfile -> build_vla_from_cfg -> model.from_pretrained'),
-            host_boundary=(
-                'Original _trim_common_left_padding + '
-                'get_rope_index in external samples'),
+                'Config.fromfile -> build_vla_from_cfg -> native strict load_state_dict'
+            ),
+            config_normalization=config_normalization,
+            checkpoint_dtypes=checkpoint_dtypes,
+            renamed_checkpoint_keys=renamed_checkpoint_keys,
+            runtime_parameter_dtype='bfloat16',
+            host_boundary=('Original _trim_common_left_padding + '
+                           'get_rope_index in external samples'),
             static_image_grid_thw=[[1, 16, 16], [1, 16, 16]],
             image_geometry=[1, 512, 1536],
             batch_size=1,
             dynamic_length=[specs[1].min_shape[1], specs[1].max_shape[1]],
-            reference_attention='flash_attention_2',
+            reference_attention=reference_attention,
             export_attention='sdpa',
             attention_modules=attention_modules,
-            attention_switch_gpu_parity='pending',
             postprocessing='Original predict_action only; no new mathematics'))

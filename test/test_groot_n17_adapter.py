@@ -1,16 +1,19 @@
 """Interface tests only. Tiny doubles are NOT full-model parity evidence."""
 import copy
 import runpy
+import tempfile
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+from mmengine.config import Config
 
 from fluxhermes.adapters.groot_n17 import (_NAMES, _check_inputs, _check_specs,
-                                           _make_wrapper, _reference_runner,
-                                           _set_attention, prepare_groot_n17)
+                                           _make_wrapper, _native_checkpoint_keys,
+                                           _native_model_config, _reference_runner,
+                                           _verify_attention, prepare_groot_n17)
 from fluxhermes.contracts import DeploymentConfig
 from fluxhermes.errors import ConfigurationError
 
@@ -47,16 +50,13 @@ class TinyVLM:
     def __init__(self):
         self.layers = [TinyAttention(), TinyAttention()]
         self.modes = []
-        self.ignore_second = False
 
     def named_modules(self):
         return [(str(i), item) for i, item in enumerate(self.layers)]
 
     def set_attn_implementation(self, mode):
         self.modes.append(mode)
-        for index, layer in enumerate(self.layers):
-            if index == 1 and self.ignore_second and mode != 'sdpa':
-                continue
+        for layer in self.layers:
             layer.config._attn_implementation = mode
 
 
@@ -116,23 +116,22 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(config['ir_config']['normalize_full_slices'])
         self.assertFalse(config['ir_config']['dynamo'])
 
-    def test_partial_attention_setter_detected(self):
+    def test_mixed_attention_detected(self):
         vlm = TinyVLM()
-        vlm.ignore_second = True
+        vlm.layers[1].config._attn_implementation = 'flash_attention_2'
         with self.assertRaisesRegex(RuntimeError, 'Attention 1'):
-            _set_attention(vlm, 'flash_attention_2')
+            _verify_attention(vlm, 'sdpa')
 
-    def test_reference_modes_and_finally(self):
-        for failure in ('none', 'forward', 'setter'):
+    def test_reference_keeps_saved_sdpa_mode(self):
+        for failure in ('none', 'forward'):
             vlm = TinyVLM()
-            vlm.ignore_second = failure == 'setter'
 
             class TinyWrapper:
                 model = SimpleNamespace(vlm_backbone=SimpleNamespace(vlm=vlm))
 
                 def __call__(self, *values):
                     self_test.assertEqual(vlm.layers[0].config._attn_implementation,
-                                          'flash_attention_2')
+                                          'sdpa')
                     if failure == 'forward':
                         raise RuntimeError('forward failure')
                     return values[-1]
@@ -145,15 +144,177 @@ class ContractTests(unittest.TestCase):
             else:
                 with self.assertRaises(RuntimeError):
                     runner(samples())
-            self.assertEqual(vlm.modes, ['flash_attention_2', 'sdpa'])
             self.assertTrue(
                 all(layer.config._attn_implementation == 'sdpa'
                     for layer in vlm.layers))
+
+    def test_native_fa2_reference_restores_sdpa_after_success_and_failure(self):
+        for fail in (False, True):
+            vlm = TinyVLM()
+
+            def predict(*values):
+                self.assertEqual(vlm.layers[0].config._attn_implementation,
+                                 'flash_attention_2')
+                if fail:
+                    raise RuntimeError('reference failed')
+                return values[-1]
+
+            predict.model = SimpleNamespace(vlm_backbone=SimpleNamespace(vlm=vlm))
+            runner = _reference_runner(predict, self.specs,
+                                       SimpleNamespace(inference_mode=nullcontext),
+                                       'flash_attention_2')
+            if fail:
+                with self.assertRaisesRegex(RuntimeError, 'reference failed'):
+                    runner(samples())
+            else:
+                runner(samples())
+            self.assertEqual(vlm.modes, ['flash_attention_2', 'sdpa'])
+
+
+class NativeConfigTests(unittest.TestCase):
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.cfg = Config(
+            dict(
+                model=dict(
+                    type='GrootN17VLA',
+                    model_path='/training/official',
+                    processor_path='/training/processor',
+                    load_metadata=True,
+                    qwen3_runtime='compat_457',
+                    vlm_backbone=dict(
+                        type='GrootN17Qwen3Backbone',
+                        use_flash_attention=False,
+                        model_name='/training/Cosmos-Reason2-2B',
+                        select_layer=16,
+                        load_bf16=False,
+                        reproject_vision=True,
+                        trainable_params_fp32=False,
+                        tune_llm=False,
+                        tune_top_llm_layers=0,
+                        tune_visual=False,
+                        transformers_loading_kwargs=dict(
+                            local_files_only=True, trust_remote_code=True)),
+                    vla_head=dict(type='GrootN17ActionHead',
+                                  tune_diffusion_model=True))))
+        self.architecture = dict(
+            model_type='qwen3_vl', text_config=dict(hidden_size=2048))
+        path = self.root / 'configs/gr00tn17' / (
+            'gr00tn17_qwen3vl_2b_libero_10_full_finetune.py')
+        path.parent.mkdir(parents=True)
+        Config(
+            dict(
+                model=dict(
+                    vlm_backbone=dict(
+                        type='GrootN17Qwen3Backbone',
+                        model_config=self.architecture,
+                        use_flash_attention=True,
+                        load_bf16=False),
+                    vla_head=dict(type='GrootN17ActionHead')))).dump(str(path))
+
+    def test_saved_config_reuses_source_architecture_without_mutation(self):
+        before = copy.deepcopy(self.cfg.to_dict())
+        model, report = _native_model_config(self.cfg, self.root)
+        self.assertEqual(self.cfg.to_dict(), before)
+        self.assertIsNone(model['model_path'])
+        self.assertIsNone(model['processor_path'])
+        self.assertFalse(model['load_metadata'])
+        self.assertFalse(model['load_pretrained_weights'])
+        backbone = model['vlm_backbone']
+        self.assertEqual(backbone['model_config'], self.architecture)
+        self.assertEqual(backbone['select_layer'], 16)
+        self.assertFalse(backbone['use_flash_attention'])
+        self.assertFalse(backbone['load_bf16'])
+        self.assertEqual(len(report['removed_legacy_backbone_options']), 6)
+        self.assertTrue(Path(report['architecture_source']).is_file())
+
+    def test_inline_architecture_is_not_replaced(self):
+        inline = dict(model_type='qwen3_vl', text_config=dict(hidden_size=1024))
+        self.cfg.model.vlm_backbone.model_config = inline
+        model, report = _native_model_config(self.cfg, self.root / 'not-needed')
+        self.assertEqual(model['vlm_backbone']['model_config'], inline)
+        self.assertIsNone(report['architecture_source'])
+
+    def test_wrong_architecture_and_attention_fail(self):
+        for key, value in [('model_name', '/unknown/backbone'),
+                           ('type', 'OtherBackbone'), ('use_flash_attention', None)]:
+            cfg = copy.deepcopy(self.cfg)
+            cfg.model.vlm_backbone[key] = value
+            with self.subTest(key=key), self.assertRaises(ConfigurationError):
+                _native_model_config(cfg, self.root)
+
+    def test_unsupported_legacy_values_fail_even_with_inline_architecture(self):
+        for key, value in [('model_name', '/unrelated/model'),
+                           ('trainable_params_fp32', 'true'),
+                           ('transformers_loading_kwargs', dict(torch_dtype='float16'))
+                           ]:
+            cfg = copy.deepcopy(self.cfg)
+            cfg.model.vlm_backbone.model_config = self.architecture
+            cfg.model.vlm_backbone[key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(ConfigurationError, key):
+                _native_model_config(cfg, self.root)
+
+    def test_flat_native_config_uses_source_components(self):
+        cfg = Config(
+            dict(
+                model=dict(
+                    type='GrootN17VLA',
+                    assembly_runtime='native',
+                    load_mode='native_safe',
+                    processor_runtime='native',
+                    backbone_model_path='/old/Cosmos-Reason2-2B',
+                    use_flash_attention=False,
+                    qwen3_runtime='compat_457')))
+        original = copy.deepcopy(cfg.to_dict())
+        model, report = _native_model_config(cfg, self.root)
+        self.assertEqual(cfg.to_dict(), original)
+        self.assertEqual(model['vlm_backbone']['model_config'], self.architecture)
+        self.assertEqual(model['vla_head']['type'], 'GrootN17ActionHead')
+        self.assertFalse(model['vlm_backbone']['use_flash_attention'])
+        self.assertNotIn('processor_runtime', model)
+        self.assertEqual(len(report['removed_legacy_model_options']), 4)
+        cfg.model.assembly_runtime = 'official'
+        with self.assertRaisesRegex(ConfigurationError, 'assembly_runtime'):
+            _native_model_config(cfg, self.root)
+
+    def test_native_fa2_and_training_precision_flags_are_preserved_or_recorded(self):
+        self.cfg.model.vlm_backbone.use_flash_attention = True
+        self.cfg.model.vlm_backbone.trainable_params_fp32 = True
+        model, report = _native_model_config(self.cfg, self.root)
+        self.assertTrue(model['vlm_backbone']['use_flash_attention'])
+        self.assertNotIn('trainable_params_fp32', model['vlm_backbone'])
+        self.assertTrue(
+            report['removed_legacy_backbone_options']['trainable_params_fp32'])
+
+    def test_unknown_backbone_options_are_not_silently_dropped(self):
+        self.cfg.model.vlm_backbone.unsupported_option = True
+        model, _ = _native_model_config(self.cfg, self.root)
+        self.assertIn('unsupported_option', model['vlm_backbone'])
 
 
 @unittest.skipIf(torch is None,
                  'Torch unavailable; real tensor boundary tests require Torch')
 class TensorBoundaryTests(unittest.TestCase):
+
+    def test_checkpoint_aliases_preserve_original_tensors(self):
+        weight = torch.tensor([1.25, -3.0], dtype=torch.float32)
+        for prefix in ('vlm_backbone.', 'n17_backbone.'):
+            old, new = prefix + 'model.layer.weight', prefix + 'vlm.layer.weight'
+            state = {old: weight, 'vla_head.model.weight': weight}
+            mapped, count = _native_checkpoint_keys(state)
+            self.assertEqual(count, 1)
+            self.assertIs(mapped[new], weight)
+            self.assertIs(mapped['vla_head.model.weight'], weight)
+            self.assertIn(old, state)
+            self.assertNotIn(new, state)
+            unchanged, count = _native_checkpoint_keys(mapped)
+            self.assertEqual(count, 0)
+            self.assertIs(unchanged[new], weight)
+            with self.assertRaisesRegex(ConfigurationError, 'Conflicting checkpoint'):
+                _native_checkpoint_keys({old: weight, new: weight.clone()})
 
     def test_hook_noise_and_instance_restore(self):
 
@@ -191,6 +352,7 @@ class TensorBoundaryTests(unittest.TestCase):
 
             def sentinel():
                 return None
+
             if local:
                 model.vla_head._sample_initial_actions = sentinel
             for failure in (False, True):
