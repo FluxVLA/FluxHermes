@@ -76,6 +76,7 @@ class CLITest(unittest.TestCase):
         path.write_text(
             "deployment = dict(\n"
             " name='cli-demo', work_dir='work',\n"
+            " pipeline=[dict(type='PrepareModel')],\n"
             " source=dict(type='python', factory='missing:factory'),\n"
             " inputs=[dict(name='x', dtype='float32', shape=(1, 2))],\n"
             " outputs=[dict(name='y', dtype='float32', shape=(1, 2))],\n"
@@ -148,7 +149,7 @@ class CLITest(unittest.TestCase):
         execute.assert_called_once_with()
         self.assertEqual(result, 0)
         self.assertEqual(errors, '')
-        self.assertIn('Bundle created:', output)
+        self.assertIn('Pipeline completed:', output)
         self.assertNotIn('Dry run only', output)
 
     def test_inspect_checks_real_bundle_integrity(self):

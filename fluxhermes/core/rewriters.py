@@ -31,9 +31,8 @@ class _RewriteRecord:
             (self.backend, backend),
             (self.ir, ir),
         )
-        return all(
-            expected == 'default' or expected == actual
-            for expected, actual in fields)
+        return all(expected == 'default' or expected == actual
+                   for expected, actual in fields)
 
     def score(self, codebase: str, backend: str, ir: str) -> int:
         return sum(expected == actual for expected, actual in (
@@ -108,28 +107,28 @@ class FunctionRewriter:
         config: Any = None,
     ) -> Iterator[None]:
         restored = []
-        for target, record in self._selected(codebase, backend, ir).items():
-            owner, attribute = _resolve_owner(target)
-            origin = getattr(owner, attribute)
-            rewrite_context = RewriteContext(
-                origin_func=origin,
-                config=config,
-                codebase=codebase,
-                backend=backend,
-                ir=ir,
-            )
-
-            def replacement(
-                *args: Any,
-                __record: _RewriteRecord = record,
-                __context: RewriteContext = rewrite_context,
-                **kwargs: Any,
-            ) -> Any:
-                return __record.function(__context, *args, **kwargs)
-
-            setattr(owner, attribute, replacement)
-            restored.append((owner, attribute, origin))
         try:
+            for target, record in self._selected(codebase, backend, ir).items():
+                owner, attribute = _resolve_owner(target)
+                origin = getattr(owner, attribute)
+                rewrite_context = RewriteContext(
+                    origin_func=origin,
+                    config=config,
+                    codebase=codebase,
+                    backend=backend,
+                    ir=ir,
+                )
+
+                def replacement(
+                    *args: Any,
+                    __record: _RewriteRecord = record,
+                    __context: RewriteContext = rewrite_context,
+                    **kwargs: Any,
+                ) -> Any:
+                    return __record.function(__context, *args, **kwargs)
+
+                setattr(owner, attribute, replacement)
+                restored.append((owner, attribute, origin))
             yield
         finally:
             for owner, attribute, origin in reversed(restored):

@@ -33,7 +33,8 @@ class PipelinePlanTest(unittest.TestCase):
         self.assertEqual(plan['stages'][0]['name'], 'prepare_model')
         self.assertEqual(plan['codebase'], 'fluxvla')
         self.assertEqual(plan['backend'], 'tensorrt')
-        self.assertTrue(plan['stages'][2]['enabled'])
+        self.assertEqual(plan['stages'][2]['type'], 'LowerPrecision')
+        self.assertEqual(plan['stages'][1]['transforms'][0]['type'], 'ExportONNX')
 
     @unittest.skipUnless(
         os.environ.get('FLUXHERMES_RUN_TRT_TESTS') == '1',
@@ -52,11 +53,24 @@ class PipelinePlanTest(unittest.TestCase):
                         dict(
                             name='negative-control',
                             work_dir=str(root / 'work'),
+                            pipeline=([
+                                dict(
+                                    type='IsolatedExport',
+                                    transforms=[
+                                        dict(type='PrepareModel'),
+                                        dict(type='ExportONNX')
+                                    ])
+                            ] if isolated else [
+                                dict(type='PrepareModel'),
+                                dict(type='ExportONNX')
+                            ]) + [dict(type='ConvertBackend')] +
+                            ([dict(type='PrepareReference')] if isolated else []) +
+                            [dict(type='ValidateBackend'),
+                             dict(type='PackageBundle')],
                             codebase_config=dict(
                                 type='python',
                                 task='custom',
                                 device='cuda:0',
-                                isolate_export=isolated,
                                 python_paths=[str(Path(__file__).parent)],
                                 source=dict(
                                     type='python',
@@ -101,6 +115,7 @@ class PipelinePlanTest(unittest.TestCase):
             path.write_text(
                 "deployment = dict(\n"
                 " name='demo', work_dir='work',\n"
+                " pipeline=[dict(type='PrepareModel')],\n"
                 " source=dict(type='python', factory='missing:factory'),\n"
                 " inputs=[dict(name='x', dtype='float32', shape=(1, 2))],\n"
                 " outputs=[dict(name='y', dtype='float32', shape=(1, 2))],\n"

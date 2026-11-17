@@ -1,411 +1,103 @@
+"""Execute the deployment transform chain declared in configuration."""
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from uuid import uuid4
 
-from .apis import build_task_processor, import_config_plugins
-from .backend import get_backend_manager
-from .bundle import create_bundle
-from .contracts import BundleManifest, DeploymentConfig
-from .core import FUNCTION_REWRITER, PipelineManager
-from .errors import ConfigurationError
-from .exporters import export_onnx
-from .optimization import lower_onnx_precision, optimize_onnx
+from .apis import import_config_plugins
+from .contracts import DeploymentConfig
+from .core import PipelineManager
 from .plugins import add_python_paths, load_symbol
-from .quantization import quantize_onnx_qdq
-from .utils import sha256_file, write_json
-from .validation import validate_backend
-
-
-@dataclass(frozen=True)
-class StagePlan:
-    name: str
-    enabled: bool
-    description: str
+from .transforms import Compose
+from .utils import write_json
 
 
 class CompilePipeline:
-    """Codebase -> IR -> backend pipeline modeled after MMDeploy boundaries."""
+    """Build a config-defined transform chain with timing and failure reports."""
 
     def __init__(self, config: DeploymentConfig) -> None:
         self.config = config
         self.pipeline_manager = PipelineManager()
-        self._register_hooks()
-
-    def _register_hooks(self) -> None:
-        import_config_plugins(self.config)
-        python_paths = list(self.config.source.get('python_paths', ()))
-        python_paths.extend(self.config.codebase.get('python_paths', ()))
-        add_python_paths(python_paths)
-        for hook_config in self.config.pipeline_hooks:
-            hook = load_symbol(str(hook_config['hook']))
+        import_config_plugins(config)
+        add_python_paths([
+            *config.source.get('python_paths', ()),
+            *config.codebase.get('python_paths', ()),
+        ])
+        for hook in config.pipeline_hooks:
             self.pipeline_manager.add_hook(
-                stage=str(hook_config['stage']),
-                hook=hook,
-                when=str(hook_config.get('when', 'after')),
-            )
+                stage=hook['stage'],
+                hook=load_symbol(hook['hook']),
+                when=hook.get('when', 'after'))
+        self.transforms = Compose(config.pipeline)
+        self.context = self.new_context('')
+        self.transforms.validate(set(self.context), config)
 
-    def plan(self) -> List[StagePlan]:
-        quant_mode = str(self.config.quantization.get('mode', 'none')).lower()
-        codebase = self.config.codebase['type']
-        task = self.config.codebase['task']
-        backend = self.config.backend['type']
-        ir = self.config.ir['type']
-        return [
-            StagePlan(
-                'prepare_model',
-                True,
-                f'build {codebase}:{task} task processor and export wrapper',
-            ),
-            StagePlan('export_ir', True, f'export a named {ir} graph'),
-            StagePlan(
-                'optimize_ir',
-                bool(self.config.optimization.get('simplify', False))
-                or self.config.precision == 'fp16',
-                f'optimize and explicitly type the {ir} graph',
-            ),
-            StagePlan(
-                'quantize',
-                quant_mode != 'none',
-                f'apply {quant_mode} quantization with representative data',
-            ),
-            StagePlan(
-                'build_backend',
-                True,
-                f'build {backend} files at {self.config.precision} precision',
-            ),
-            StagePlan(
-                'validate',
-                bool(self.config.validation.get('enabled', True)),
-                'compare source and backend-wrapper outputs',
-            ),
-            StagePlan('package', True, 'write an integrity-checked robot bundle'),
-        ]
+    def new_context(self, run_id):
+        return dict(
+            config=self.config,
+            manager=self.pipeline_manager,
+            run_id=run_id,
+            device=str(
+                self.config.codebase.get('device',
+                                         self.config.source.get('device', 'cuda:0'))),
+            output=self.config.work_dir,
+            validation=None)
 
-    def plan_dict(self) -> Dict[str, Any]:
-        return {
-            'name': self.config.name,
-            'work_dir': str(self.config.work_dir),
-            'codebase': self.config.codebase['type'],
-            'task': self.config.codebase['task'],
-            'ir': self.config.ir['type'],
-            'backend': self.config.backend['type'],
-            'precision': self.config.precision,
-            'stages': [stage.__dict__ for stage in self.plan()],
-            'inputs': [item.to_dict() for item in self.config.inputs],
-            'outputs': [item.to_dict() for item in self.config.outputs],
-        }
+    def plan(self):
+        return self.transforms.plan()
 
-    def _bundle_dir(self) -> Path:
-        configured = self.config.package.get('output_dir')
-        if configured:
-            path = Path(str(configured)).expanduser()
-            if not path.is_absolute() and self.config.config_path is not None:
-                path = self.config.config_path.parent / path
-            return path.resolve()
-        return (self.config.work_dir / 'bundle').resolve()
-
-    def _package_assets(self) -> List[Path]:
-        resolved = []
-        for value in self.config.package.get('assets', ()):
-            path = Path(str(value)).expanduser()
-            if not path.is_absolute() and self.config.config_path is not None:
-                path = self.config.config_path.parent / path
-            resolved.append(path.resolve())
-        return resolved
-
-    def _validate_precision_configuration(self) -> None:
-        if (self.config.precision == 'fp16'
-                and not bool(self.config.optimization.get('fp16_conversion', True))
-                and not bool(
-                    self.config.optimization.get('graph_is_explicitly_typed', False))):
-            raise ConfigurationError(
-                'FP16 requires optimization.fp16_conversion=True or a task '
-                'processor that declares graph_is_explicitly_typed=True.')
+    def plan_dict(self):
+        config = self.config
+        return dict(
+            name=config.name,
+            work_dir=str(config.work_dir),
+            codebase=config.codebase.get('type'),
+            task=config.codebase.get('task'),
+            ir=config.ir['type'],
+            backend=config.backend['type'],
+            precision=config.precision,
+            stages=self.plan(),
+            pipeline=config.pipeline,
+            inputs=[item.to_dict() for item in config.inputs],
+            outputs=[item.to_dict() for item in config.outputs])
 
     def execute(self) -> Path:
-        from uuid import uuid4
-        self._run_id = uuid4().hex
-        self._validation_result = None
+        self.context = self.new_context(uuid4().hex)
         self.pipeline_manager.records.clear()
-        write_json(
-            self.config.work_dir / 'result.json', {
-                'run_id': self._run_id,
-                'status': 'running',
-                'workflow_completed': False,
-                'numerical_passed': None,
-            })
-        try:
-            return self._execute()
-        except Exception as error:
-            validation = getattr(error, 'report', self._validation_result)
-            result = {
-                'run_id':
-                self._run_id,
-                'status':
-                'failed',
-                'workflow_completed':
-                False,
-                'numerical_passed':
-                (validation.get('passed') if isinstance(validation, dict) else None),
-                'error': {
-                    'type': type(error).__name__,
-                    'message': str(error)
-                },
-                'validation':
-                validation,
-                'stages':
-                self.pipeline_manager.report(),
-            }
-            write_json(self.config.work_dir / 'failure.json', result)
-            write_json(self.config.work_dir / 'result.json', result)
-            raise
-
-    def _record_validation(self, *args):
-        self._validation_result = validate_backend(*args)
-        return self._validation_result
-
-    def _export_in_subprocess(self):
-        import subprocess
-        import sys
-
-        from .core.pipeline_manager import StageRecord
-        report_path = self.config.work_dir / 'export-stage.json'
-        process = subprocess.run([
-            sys.executable,
-            '-B',
-            '-m',
-            'fluxhermes.export_worker',
-            str(self.config.work_dir / 'resolved_config.json'),
-            self._run_id,
-        ],
-                                 check=False)
-        if not report_path.is_file():
-            raise ConfigurationError(
-                f'Export worker exited {process.returncode} without its stage report.')
-        state = json.loads(report_path.read_text(encoding='utf-8'))
-        if state['run_id'] != self._run_id:
-            raise ConfigurationError('Export worker report belongs to a different run.')
-        self.pipeline_manager.records.extend(
-            StageRecord(**record) for record in state['stages'])
-        if process.returncode != 0 or not state['passed']:
-            raise ConfigurationError(
-                f'Export worker failed ({process.returncode}): {state.get("error")}')
-        if not Path(state['graph_path']).resolve().is_relative_to(
-                self.config.work_dir.resolve()):
-            raise ConfigurationError('Export worker graph escaped its work directory.')
-        return state
-
-    def _prepare_ir(self, device):
-        work_dir = self.config.work_dir
-        task_processor = self.pipeline_manager.run(
-            'build_task_processor',
-            build_task_processor,
-            self.config,
-            device,
-        )
-        prepared = self.pipeline_manager.run('prepare_model',
-                                             task_processor.prepare_model)
-
-        codebase_name = str(self.config.codebase['type'])
-        backend_name = str(self.config.backend['type'])
-        ir_name = str(self.config.ir['type'])
-        with FUNCTION_REWRITER.context(
-                codebase=codebase_name,
-                backend=backend_name,
-                ir=ir_name,
-                config=self.config,
-        ):
-            ir_path = self.pipeline_manager.run(
-                'export_ir',
-                export_onnx,
-                prepared,
-                work_dir / 'model.onnx',
-                self.config.ir,
-            )
-
-        graph_path = self.pipeline_manager.run(
-            'optimize_ir',
-            optimize_onnx,
-            ir_path,
-            work_dir / 'model.optimized.onnx',
-            self.config.optimization,
-        )
-        graph_path = self.pipeline_manager.run(
-            'lower_precision',
-            lower_onnx_precision,
-            graph_path,
-            work_dir / f'model.{self.config.precision}.onnx',
-            self.config.precision,
-            self.config.optimization,
-        )
-
-        quant_mode = str(self.config.quantization.get('mode', 'none')).lower()
-        if quant_mode not in {'none', 'int8'}:
-            raise ConfigurationError(f'Unsupported quantization mode: {quant_mode}. '
-                                     'Initial support is none or int8 Q/DQ.')
-        if self.config.precision == 'int8' and quant_mode != 'int8':
-            raise ConfigurationError(
-                'Backend precision=int8 requires quantization.mode=int8.')
-        if quant_mode == 'int8':
-            if self.config.precision != 'int8':
-                raise ConfigurationError(
-                    'INT8 Q/DQ quantization requires backend precision=int8.')
-            graph_path = self.pipeline_manager.run(
-                'quantize',
-                quantize_onnx_qdq,
-                graph_path,
-                work_dir / 'model.int8.onnx',
-                prepared.calibration_source,
-                self.config.quantization,
-            )
-
-        return task_processor, prepared, graph_path
-
-    def _execute(self) -> Path:
         work_dir = self.config.work_dir
         work_dir.mkdir(parents=True, exist_ok=True)
         write_json(work_dir / 'resolved_config.json', self.config.to_dict())
-        self._validate_precision_configuration()
-
-        device = str(
-            self.config.codebase.get('device',
-                                     self.config.source.get('device', 'cuda:0')))
-        isolated = self.config.codebase.get('isolate_export', False)
-        if type(isolated) is not bool:
-            raise ConfigurationError('isolate_export must be true or false.')
-        if isolated:
-            export_state = self._export_in_subprocess()
-            graph_path = Path(export_state['graph_path'])
-            prepared = task_processor = None
-        else:
-            task_processor, prepared, graph_path = self._prepare_ir(device)
-        backend_name = str(self.config.backend['type'])
-
-        backend_manager = get_backend_manager(backend_name)
-        backend_result = self.pipeline_manager.run(
-            'build_backend',
-            backend_manager.to_backend,
-            [graph_path],
-            work_dir,
-            self.config,
-        )
-
-        if bool(self.config.validation.get('enabled', True)):
-            if isolated:
-                task_processor = self.pipeline_manager.run(
-                    'build_reference_task_processor', build_task_processor, self.config,
-                    device)
-                prepared = self.pipeline_manager.run(
-                    'prepare_model',
-                    task_processor.prepare_model,
-                    metadata={'role': 'reference_reload'})
-                if {
-                        name: str(value.dtype)
-                        for name, value in prepared.inputs.items()
-                } != export_state['input_dtypes']:
-                    raise ConfigurationError(
-                        'Reference reload changed the representative input contract.')
-                from .validation.parity import _load_sample
-                prepared.inputs, _ = _load_sample(work_dir / 'export-inputs.npz',
-                                                  prepared.inputs)
-            wrapper = backend_manager.build_wrapper(
-                backend_result.files,
-                device=device,
-                require_target_match=False,
-            )
-            validation = self.pipeline_manager.run(
-                'validate',
-                self._record_validation,
-                prepared,
-                wrapper,
-                self.config.validation,
-            )
-            validation['enabled'] = True
-        else:
-            validation = {
-                'enabled': False,
-                'passed': False,
-                'reason': 'validation was disabled',
-            }
-
-        self._validation_result = validation
-        if isolated:
-            source_metadata = dict(export_state['source_metadata'])
-        else:
-            source_metadata = dict(prepared.metadata)
-            source_metadata.update(task_processor.runtime_metadata())
-        if self.config.config_path is not None:
-            source_metadata['deployment_config_sha256'] = sha256_file(
-                self.config.config_path)
-        runtime = dict(self.config.package.get('runtime', {}))
-        runtime.setdefault('action_output', self.config.outputs[0].name)
-
-        backend_relative_files = [
-            f'backend/{path.name}' for path in backend_result.files
-        ]
-        manifest = BundleManifest(
-            schema_version=2,
-            name=self.config.name,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            backend=backend_name,
-            precision=self.config.precision,
-            backend_files=tuple(backend_relative_files),
-            backend_metadata=dict(backend_result.metadata),
-            source=source_metadata,
-            inputs=self.config.inputs,
-            outputs=self.config.outputs,
-            runtime=runtime,
-            validation=validation,
-            files={},
-            metadata={
-                'codebase_config': self.config.codebase,
-                'backend_config': self.config.backend,
-                'ir_config': self.config.ir,
-                'quantization': self.config.quantization,
-                'optimization': self.config.optimization,
-                'pipeline': self.pipeline_manager.report(),
-            },
-        )
-
-        bundle_files: Dict[str, str | Path] = {
-            relative: source
-            for relative, source in zip(backend_relative_files, backend_result.files)
-        }
-        bundle_files['build/resolved_config.json'] = (work_dir / 'resolved_config.json')
-        if self.config.config_path is not None:
-            bundle_files['build/deployment.py'] = self.config.config_path
-        if bool(self.config.package.get('include_onnx', False)):
-            bundle_files['model/model.onnx'] = graph_path
-            candidates = set(graph_path.parent.glob(graph_path.name + '*'))
-            candidates.update(graph_path.parent.glob(graph_path.stem + '*.data'))
-            for external in sorted(candidates):
-                if external.is_file() and external != graph_path:
-                    bundle_files[f'model/{external.name}'] = external
-
-        bundle = self.pipeline_manager.run(
-            'package',
-            create_bundle,
-            self._bundle_dir(),
-            manifest,
-            bundle_files,
-            assets=self._package_assets(),
-        )
-        (work_dir / 'result.json').write_text(
-            json.dumps(
-                {
-                    'bundle': str(bundle),
-                    'run_id': self._run_id,
-                    'status': 'completed',
-                    'workflow_completed': True,
-                    'numerical_passed': bool(validation.get('passed', False)),
-                    'pipeline': self.pipeline_manager.report(),
-                },
-                indent=2,
-            ) + '\n',
-            encoding='utf-8',
-        )
-        return bundle
+        write_json(
+            work_dir / 'result.json',
+            dict(
+                run_id=self.context['run_id'],
+                status='running',
+                workflow_completed=False,
+                numerical_passed=None))
+        try:
+            self.context = self.transforms(self.context)
+        except Exception as error:
+            validation = getattr(error, 'report', self.context.get('validation'))
+            report = dict(
+                run_id=self.context['run_id'],
+                status='failed',
+                workflow_completed=False,
+                numerical_passed=validation.get('passed') if isinstance(
+                    validation, dict) else None,
+                error=dict(type=type(error).__name__, message=str(error)),
+                validation=validation,
+                stages=self.pipeline_manager.report())
+            write_json(work_dir / 'failure.json', report)
+            write_json(work_dir / 'result.json', report)
+            raise
+        validation = self.context.get('validation')
+        write_json(
+            work_dir / 'result.json',
+            dict(
+                run_id=self.context['run_id'],
+                status='completed',
+                workflow_completed=True,
+                numerical_passed=validation.get('passed') if validation else None,
+                output=str(self.context['output']),
+                pipeline=self.pipeline_manager.report()))
+        return self.context['output']

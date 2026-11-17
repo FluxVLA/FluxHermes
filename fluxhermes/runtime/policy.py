@@ -46,7 +46,7 @@ class RobotPolicy:
         if require_validated and not self.manifest.validation.get('passed', False):
             raise ArtifactError(
                 'Refusing to load an unvalidated backend for robot execution. '
-                'Recompile with validation enabled or explicitly set '
+                'Recompile with ValidateBackend in the pipeline or explicitly set '
                 'require_validated=False for development only.')
         from ..apis import build_backend_wrapper
         self.engine = build_backend_wrapper(

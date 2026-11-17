@@ -37,11 +37,22 @@ class IsolatedExportTest(unittest.TestCase):
                     dict(
                         name='bf16-worker-roundtrip',
                         work_dir=str(root / 'work'),
+                        pipeline=[
+                            dict(
+                                type='IsolatedExport',
+                                transforms=[
+                                    dict(type='PrepareModel'),
+                                    dict(type='ExportONNX')
+                                ]),
+                            dict(type='ConvertBackend'),
+                            dict(type='PrepareReference'),
+                            dict(type='ValidateBackend'),
+                            dict(type='PackageBundle'),
+                        ],
                         codebase_config=dict(
                             type='python',
                             task='custom',
                             device='cuda:0',
-                            isolate_export=True,
                             python_paths=[str(Path(__file__).parent)],
                             source=dict(
                                 type='python',
@@ -91,6 +102,8 @@ class ExportWorkerCPUTest(unittest.TestCase):
                 dict(
                     name='cpu-bf16-snapshot',
                     work_dir=str(root),
+                    pipeline=[dict(type='PrepareModel'),
+                              dict(type='ExportONNX')],
                     codebase_config=dict(
                         type='python',
                         task='custom',

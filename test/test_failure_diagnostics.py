@@ -209,7 +209,7 @@ class BackendExceptionDiagnosticsTest(unittest.TestCase):
 
 
 class PipelineReportControlTest(unittest.TestCase):
-    """Real execute/_execute/manager; injected non-inference stage boundaries."""
+    """Real transform orchestration; injected non-inference stage boundaries."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -221,6 +221,15 @@ class PipelineReportControlTest(unittest.TestCase):
                 dict(
                     name='cpu-report-control',
                     work_dir=str(self.root / 'work'),
+                    pipeline=[
+                        dict(type='PrepareModel'),
+                        dict(type='ExportONNX'),
+                        dict(type='OptimizeONNX'),
+                        dict(type='LowerPrecision'),
+                        dict(type='ConvertBackend'),
+                        dict(type='ValidateBackend'),
+                        dict(type='PackageBundle'),
+                    ],
                     source=dict(type='python', device='cpu', factory='unused:factory'),
                     inputs=[dict(name='x', dtype='float32', shape=(1, 2))],
                     outputs=[dict(name='y', dtype='float32', shape=(1, 2))],
@@ -268,7 +277,8 @@ class PipelineReportControlTest(unittest.TestCase):
             validate_backend=lambda *args: numeric_report(self.verdict),
             create_bundle=package)
         for name, replacement in replacements.items():
-            stack.enter_context(patch('fluxhermes.pipeline.' + name, replacement))
+            stack.enter_context(
+                patch('fluxhermes.transforms.stages.' + name, replacement))
 
     def read_report(self, name):
         return json.loads((self.work / (name + '.json')).read_text(encoding='utf-8'))
@@ -303,8 +313,7 @@ class PipelineReportControlTest(unittest.TestCase):
         failed = self.assert_failure(None)
         self.assertIsNone(failed['validation'])
         self.assertNotEqual(success['run_id'], failed['run_id'])
-        self.assertEqual([s['name'] for s in failed['stages']],
-                         ['build_task_processor'])
+        self.assertEqual([s['name'] for s in failed['stages']], ['prepare_model'])
         for report in self.running:
             self.assert_running(report)
 
@@ -332,7 +341,7 @@ class PipelineReportControlTest(unittest.TestCase):
         report = numeric_report(False)
         error = ValidationError('injected strict numerical failure')
         error.report = report
-        with patch('fluxhermes.pipeline.validate_backend', side_effect=error):
+        with patch('fluxhermes.transforms.stages.validate_backend', side_effect=error):
             with self.assertRaises(ValidationError) as caught:
                 self.pipeline.execute()
         self.assertIs(caught.exception, error)
@@ -354,8 +363,9 @@ class PipelineReportControlTest(unittest.TestCase):
 
                     def after_hook(**kwargs):
                         # The numerical report must already be saved before this hook.
-                        self.assertEqual(self.pipeline._validation_result,
-                                         numeric_report(verdict))
+                        self.assertEqual(self.pipeline.context['validation'], {
+                            **numeric_report(verdict), 'enabled': True
+                        })
                         if self.failure == 'after_hook':
                             raise LookupError('injected after hook failure')
 

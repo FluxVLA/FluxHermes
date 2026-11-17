@@ -95,6 +95,7 @@ class DeploymentConfig:
     quantization: Dict[str, Any] = field(default_factory=dict)
     validation: Dict[str, Any] = field(default_factory=dict)
     package: Dict[str, Any] = field(default_factory=dict)
+    pipeline: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
     pipeline_hooks: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
     config_path: Optional[Path] = None
 
@@ -109,6 +110,10 @@ class DeploymentConfig:
         if missing:
             raise ConfigurationError(
                 f'Missing deployment configuration keys: {", ".join(missing)}')
+        pipeline = data.get('pipeline', ())
+        if not isinstance(pipeline, (list, tuple)):
+            raise ConfigurationError(
+                'deployment.pipeline must be a list of transforms.')
         inputs = tuple(TensorSpec.from_dict(item) for item in data['inputs'])
         outputs = tuple(TensorSpec.from_dict(item) for item in data['outputs'])
         if not inputs or not outputs:
@@ -149,6 +154,7 @@ class DeploymentConfig:
             quantization=dict(data.get('quantization', {})),
             validation=dict(data.get('validation', {})),
             package=dict(data.get('package', {})),
+            pipeline=tuple(pipeline),
             pipeline_hooks=tuple(data.get('pipeline_hooks', ())),
             config_path=config_path,
         )
@@ -166,8 +172,9 @@ class DeploymentConfig:
                 'source': source,
             }
         else:
-            raise ConfigurationError(
-                'Deployment config requires codebase_config or legacy source.')
+            return {}
+        if not codebase:
+            return {}
         if not codebase.get('type') or not codebase.get('task'):
             raise ConfigurationError(
                 'codebase_config requires non-empty type and task.')
@@ -195,7 +202,7 @@ class DeploymentConfig:
 
     @property
     def source(self) -> Dict[str, Any]:
-        return self.codebase['source']
+        return self.codebase.get('source', {})
 
     @property
     def export(self) -> Dict[str, Any]:

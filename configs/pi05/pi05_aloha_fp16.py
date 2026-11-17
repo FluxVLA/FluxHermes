@@ -7,6 +7,14 @@ input names below. The language length may vary within the declared profile.
 deployment = dict(
     name='pi05-aloha-fp16',
     work_dir='../../work_dirs/pi05-aloha-fp16',
+    pipeline=[
+        dict(type='PrepareModel'),
+        dict(type='Rewrite', transforms=[dict(type='ExportONNX')]),
+        dict(type='LowerPrecision'),
+        dict(type='ConvertBackend'),
+        dict(type='ValidateBackend'),
+        dict(type='PackageBundle'),
+    ],
     codebase_config=dict(
         type='fluxvla',
         task='predict_action',
@@ -83,12 +91,8 @@ deployment = dict(
         do_constant_folding=True,
     ),
     optimization=dict(
-        simplify=False,
         fp16_conversion=True,
         keep_io_types=True,
-    ),
-    quantization=dict(
-        mode='none',
     ),
     backend_config=dict(
         type='tensorrt',
@@ -100,7 +104,6 @@ deployment = dict(
         log_level='warning',
     ),
     validation=dict(
-        enabled=True,
         atol=2e-2,
         rtol=2e-2,
         min_cosine_similarity=0.995,
@@ -110,8 +113,6 @@ deployment = dict(
         output_dir='../../artifacts/pi05-aloha-fp16',
         include_onnx=False,
         assets=[],
-        runtime=dict(
-            action_output='actions',
-        ),
+        runtime=dict(action_output='actions', ),
     ),
 )

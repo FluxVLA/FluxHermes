@@ -8,17 +8,27 @@ exec(compile(_base.read_text(encoding='utf-8'), str(_base), 'exec'), namespace)
 deployment = namespace['deployment']
 deployment = {
     **deployment,
-    'name': 'pi05-aloha-int8',
-    'work_dir': '../../work_dirs/pi05-aloha-int8',
+    'name':
+    'pi05-aloha-int8',
+    'work_dir':
+    '../../work_dirs/pi05-aloha-int8',
+    'pipeline': [
+        dict(type='PrepareModel'),
+        dict(type='Rewrite', transforms=[dict(type='ExportONNX')]),
+        dict(type='QuantizeONNX'),
+        dict(type='ConvertBackend'),
+        dict(type='ValidateBackend'),
+        dict(type='PackageBundle'),
+    ],
     'codebase_config': {
         **deployment['codebase_config'],
         'source': {
             **deployment['codebase_config']['source'],
-            'calibration_inputs': '$PI05_CALIBRATION_NPZ_DIR',
+            'calibration_inputs':
+            '$PI05_CALIBRATION_NPZ_DIR',
         },
     },
     'quantization': {
-        'mode': 'int8',
         'calibration_method': 'percentile',
         'per_channel': True,
         'use_external_data_format': True,
