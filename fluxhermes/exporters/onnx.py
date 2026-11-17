@@ -81,7 +81,7 @@ def export_onnx(
 ) -> Path:
     """Export a prepared source model with stable tensor names.
 
-    ``legacy_bf16_compat=True`` opts into validated Torch 2.6/opset18
+    ``legacy_bf16_compat=True`` opts into validated Torch 2.6/2.8 opset18
     symbolics. ``target_opset=22`` runs the official ONNX version converter,
     preserving external-data references. Either option mandates full checking,
     even when ordinary ``check`` is disabled. No precision fallback is applied.

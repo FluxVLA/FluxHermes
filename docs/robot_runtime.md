@@ -12,7 +12,7 @@ build/resolved_config.json
 assets/                    optional tokenizer/stats/adapter files
 ```
 
-The manifest includes checksums for every file. `fluxhermes inspect` and
+The manifest includes checksums for every file. `fluxhermes-inspect` and
 `RobotPolicy` verify those checksums before asking the registered backend
 manager to construct its wrapper.
 
@@ -64,7 +64,7 @@ package = dict(
 ## Release checklist
 
 - Build on the actual device or a verified identical GPU/CUDA/TensorRT target.
-- Run `fluxhermes doctor` and preserve its output with release metadata.
+- Run `fluxhermes-doctor` and preserve its output with release metadata.
 - Pass source-versus-engine parity on more than the single export sample.
 - Confirm tokenizer, image order/color/layout, state order, masks, padding,
   normalization statistics, action cropping, and denormalization.

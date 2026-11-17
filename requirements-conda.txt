@@ -1,0 +1,6 @@
+# Keep FluxHermes compatible with the existing FluxVLA/GR00T conda stack.
+numpy==1.26.4
+onnx==1.18.0
+protobuf==4.25.1
+ml-dtypes==0.2.0
+tensorrt-cu12==11.4.0.106

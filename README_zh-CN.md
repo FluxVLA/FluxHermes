@@ -49,7 +49,7 @@ FluxHermes 借鉴 MMDeploy 的职责分层，但不依赖 MMDeploy 本身：
 ```bash
 cd /root/projects/FluxHermes
 python -m pip install -e .
-fluxhermes doctor
+python scripts/doctor.py
 ```
 
 导出和量化环境：
@@ -61,13 +61,39 @@ python -m pip install -e '.[export,quantization,dev]'
 TensorRT 必须使用和目标 CUDA/JetPack 对应的 NVIDIA 发行版本，仓库不会自动
 安装一个可能与目标驱动不兼容的 TensorRT wheel。
 
+## 独立功能入口
+
+每项功能都有独立脚本和对应的功能模块：
+
+| 功能 | 脚本 | 安装后的命令 |
+| --- | --- | --- |
+| 查看计划或完整编译 | `python scripts/compile.py` | `fluxhermes-compile` |
+| 校验和查看部署包 | `python scripts/inspect_bundle.py` | `fluxhermes-inspect` |
+| 检查运行环境 | `python scripts/doctor.py` | `fluxhermes-doctor` |
+| 单次 NPZ 样本推理 | `python scripts/run_bundle.py` | `fluxhermes-run` |
+| 推理性能测试 | `python scripts/benchmark.py` | `fluxhermes-benchmark` |
+
+下方示例在仓库根目录执行。使用脚本的绝对路径，也可以从其他目录直接运行，
+无需先安装项目；执行功能所需的依赖仍须安装在所选 Python 环境中。
+功能模块也支持直接运行，例如 `python -m fluxhermes.cli.compile`。
+更新后重新执行 `python -m pip install -e .`，即可注册这五个独立命令。
+
+每个功能模块直接解析参数并调用自己的执行函数，公共工具负责错误处理、
+NPZ 读写和运行时加载。`compile` 负责完整的导出、优化、量化、引擎构建、
+一致性验证和打包流程，
+默认只查看执行计划，添加 `--execute` 才实际执行。
+
+`.vscode/launch.json` 直接启动对应模块，包含 PI0.5 和 GR00T N1.7 的编译、
+部署包检查配置，以及通用的单次推理和性能测试配置。预检查无需输入 checkpoint
+或样本路径；推理和性能测试会提示输入部署包和样本路径。
+
 ## 快速开始
 
 先做 dry-run；此命令不会加载 checkpoint，也不会调用 GPU：
 
 ```bash
 export FLUXVLA_ROOT=/root/projects/FluxVLA
-fluxhermes compile configs/pi05/pi05_aloha_fp16.py
+python scripts/compile.py configs/pi05/pi05_aloha_fp16.py
 ```
 
 准备与配置中输入名称一致的代表性 NPZ，然后执行完整构建：
@@ -76,15 +102,15 @@ fluxhermes compile configs/pi05/pi05_aloha_fp16.py
 export PI05_CHECKPOINT=/path/to/model.safetensors
 export PI05_DEPLOY_SAMPLE=/path/to/pi05_sample.npz
 
-fluxhermes compile configs/pi05/pi05_aloha_fp16.py --execute
-fluxhermes inspect artifacts/pi05-aloha-fp16
+python scripts/compile.py configs/pi05/pi05_aloha_fp16.py --execute
+python scripts/inspect_bundle.py artifacts/pi05-aloha-fp16
 ```
 
 INT8 量化还需要一组代表性校准数据：
 
 ```bash
 export PI05_CALIBRATION_NPZ_DIR=/path/to/calibration_npz
-fluxhermes compile configs/pi05/pi05_aloha_int8.py --execute
+python scripts/compile.py configs/pi05/pi05_aloha_int8.py --execute
 ```
 
 ## 真机运行
@@ -111,11 +137,23 @@ adapter，将它和 tokenizer、归一化统计、相机/机器人配置一起�
 `package.assets`，并设置 `package.runtime.host_adapter='module:ClassName'`。
 详细说明见 [真机部署指南](docs/robot_runtime.md)。
 
+单次推理和性能测试可以直接运行：
+
+```bash
+python scripts/run_bundle.py artifacts/pi05-aloha-fp16 \
+  --inputs /path/to/pi05_sample.npz --output /tmp/actions.npz
+
+python scripts/benchmark.py artifacts/pi05-aloha-fp16 \
+  --inputs /path/to/pi05_sample.npz --warmup 20 --repeats 200
+```
+
 ## 目录结构
 
 ```text
 configs/                 PI0.5/GR00T 部署配置模板
 docs/                    架构、模型适配、量化和真机文档
+scripts/                 编译、检查、诊断、推理和性能测试的独立脚本
+fluxhermes/cli/          各功能的参数和执行逻辑、公共命令行工具
 fluxhermes/adapters/     FluxVLA 与模型系列适配层
 fluxhermes/apis/         对外 task/backend 构建 API
 fluxhermes/codebase/     codebase 与 task processor

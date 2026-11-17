@@ -54,7 +54,7 @@ environment:
 ```bash
 cd /root/projects/FluxHermes
 python -m pip install -e .
-fluxhermes doctor
+python scripts/doctor.py
 ```
 
 For export and INT8 calibration:
@@ -67,13 +67,42 @@ Install TensorRT 10 or 11 from the NVIDIA distribution matching the target CUDA 
 JetPack release. FluxHermes intentionally does not pull an arbitrary TensorRT
 wheel that may be incompatible with the target driver.
 
+## Independent tools
+
+Each function has a dedicated script and CLI module:
+
+| Function | Script | Installed command |
+| --- | --- | --- |
+| Plan or compile a bundle | `python scripts/compile.py` | `fluxhermes-compile` |
+| Verify and inspect a bundle | `python scripts/inspect_bundle.py` | `fluxhermes-inspect` |
+| Diagnose the environment | `python scripts/doctor.py` | `fluxhermes-doctor` |
+| Run one NPZ sample | `python scripts/run_bundle.py` | `fluxhermes-run` |
+| Measure inference latency | `python scripts/benchmark.py` | `fluxhermes-benchmark` |
+
+Run the examples from the repository root. Scripts also work from another
+directory when invoked by their absolute path, without an editable install;
+execution dependencies still need to be available in the selected interpreter.
+Modules support direct execution, for example `python -m fluxhermes.cli.compile`.
+Rerun `python -m pip install -e .` after upgrading to register the five installed
+commands.
+
+Each tool parses its arguments and calls its own execution function. Shared
+utilities handle errors, NPZ I/O, and runtime loading. Compilation runs the
+complete export/optimization/quantization/build/validation/packaging pipeline
+and defaults to a dry run.
+
+`.vscode/launch.json` launches these modules directly, with PI0.5 and GR00T N1.7
+compile/inspect profiles and shared inference/benchmark profiles. Dry-run
+profiles do not prompt for checkpoints or samples; runtime profiles prompt for
+the bundle and sample paths.
+
 ## Quick start
 
 Inspect the supplied PI0.5 plan without loading a checkpoint or GPU library:
 
 ```bash
 export FLUXVLA_ROOT=/root/projects/FluxVLA
-fluxhermes compile configs/pi05/pi05_aloha_fp16.py
+python scripts/compile.py configs/pi05/pi05_aloha_fp16.py
 ```
 
 Prepare a representative NPZ with the exact input keys declared in the config,
@@ -84,15 +113,15 @@ FluxVLA/TensorRT environment:
 export PI05_CHECKPOINT=/path/to/model.safetensors
 export PI05_DEPLOY_SAMPLE=/path/to/pi05_sample.npz
 
-fluxhermes compile configs/pi05/pi05_aloha_fp16.py --execute
-fluxhermes inspect artifacts/pi05-aloha-fp16
+python scripts/compile.py configs/pi05/pi05_aloha_fp16.py --execute
+python scripts/inspect_bundle.py artifacts/pi05-aloha-fp16
 ```
 
 INT8 additionally requires a directory of representative NPZ samples:
 
 ```bash
 export PI05_CALIBRATION_NPZ_DIR=/path/to/calibration_npz
-fluxhermes compile configs/pi05/pi05_aloha_int8.py --execute
+python scripts/compile.py configs/pi05/pi05_aloha_int8.py --execute
 ```
 
 ## Robot runtime
@@ -121,13 +150,13 @@ normalization, and embodiment assets under `package.assets`; set
 `package.runtime.host_adapter` to `module:ClassName`. See
 [the robot runtime guide](docs/robot_runtime.md).
 
-One-sample and latency smoke tests are available from the CLI:
+One-sample and latency smoke tests have dedicated scripts:
 
 ```bash
-fluxhermes run artifacts/pi05-aloha-fp16 \
+python scripts/run_bundle.py artifacts/pi05-aloha-fp16 \
   --inputs /path/to/pi05_sample.npz --output /tmp/actions.npz
 
-fluxhermes benchmark artifacts/pi05-aloha-fp16 \
+python scripts/benchmark.py artifacts/pi05-aloha-fp16 \
   --inputs /path/to/pi05_sample.npz --warmup 20 --repeats 200
 ```
 
@@ -136,6 +165,8 @@ fluxhermes benchmark artifacts/pi05-aloha-fp16 \
 ```text
 configs/                 deployment templates and TensorRT profiles
 docs/                    architecture, adapters, quantization, and robot guide
+scripts/                 independent compile/inspect/doctor/run/benchmark tools
+fluxhermes/cli/          per-tool arguments and execution, shared CLI utilities
 fluxhermes/apis/         public task/backend construction APIs
 fluxhermes/codebase/     codebase and task-processor integrations
 fluxhermes/backend/      backend managers and runtime wrappers

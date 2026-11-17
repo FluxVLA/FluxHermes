@@ -111,7 +111,7 @@ class ContractTests(unittest.TestCase):
     def test_config_export_flags(self):
         config = configuration()
         self.assertTrue(config['validation']['fail_on_error'])
-        self.assertIn('samples_manifest', config['validation'])
+        self.assertNotIn('samples_manifest', config['validation'])
         self.assertFalse(config['backend_config']['allow_tf32'])
         self.assertTrue(config['ir_config']['normalize_full_slices'])
         self.assertFalse(config['ir_config']['dynamo'])

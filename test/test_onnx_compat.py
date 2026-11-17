@@ -1,4 +1,4 @@
-"""Actual Torch 2.6 CPU exports/ORT checks and registry ownership tests."""
+"""Actual Torch 2.6/2.8 CPU exports/ORT checks and registry ownership tests."""
 import tempfile
 import unittest
 from pathlib import Path

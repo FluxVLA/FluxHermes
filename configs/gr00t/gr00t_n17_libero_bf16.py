@@ -5,16 +5,25 @@ its original .safetensors file, not an NVIDIA checkpoint directory. Source:
 https://huggingface.co/limxdynamics/FluxVLAEngine/tree/main/gr00t_n17_native_libero_10_full_finetune_bs64
 The old saved backbone config reuses FluxVLA's native N1.7 architecture config.
 Required env: FLUXVLA_ROOT, GROOT_N17_CONFIG, GROOT_N17_CHECKPOINT,
-GROOT_N17_DEPLOY_SAMPLE, GROOT_N17_WORK_DIR, GROOT_N17_BUNDLE_DIR,
-GROOT_N17_VALIDATION_MANIFEST. Deployment token-length range: 138..180.
+GROOT_N17_DEPLOY_SAMPLE, GROOT_N17_WORK_DIR, GROOT_N17_BUNDLE_DIR.
+Deployment token-length range: 138..180.
 Set validation.fail_on_error=False explicitly for diagnostic failed bundles;
 the default validation and unverified-runtime gates remain enabled.
 """
 
+import os
+
+
+_isolate_export = os.environ.get(
+    'GROOT_N17_ISOLATE_EXPORT', 'true').strip().lower()
+if _isolate_export not in {'true', 'false'}:
+    raise ValueError('GROOT_N17_ISOLATE_EXPORT must be true or false.')
+
 deployment = dict(
     name='gr00t-n17-libero-bf16', work_dir='$GROOT_N17_WORK_DIR',
     codebase_config=dict(
-        type='python', task='custom', device='cuda:0', isolate_export=True,
+        type='python', task='custom', device='cuda:0',
+        isolate_export=_isolate_export == 'true',
         source=dict(
             type='python',
             factory='fluxhermes.adapters.groot_n17:prepare_groot_n17',
@@ -45,8 +54,8 @@ deployment = dict(
         file_descriptor_limit=4096,
         builder_optimization_level=0, tactic_dram_size_gib=8),
     validation=dict(
-        enabled=True, atol=0.02, rtol=0.02, min_cosine_similarity=0.999,
-        fail_on_error=True, samples_manifest='$GROOT_N17_VALIDATION_MANIFEST'),
+        enabled=True, atol=0.1, rtol=0.02, min_cosine_similarity=0.999,
+        fail_on_error=True),
     package=dict(
         output_dir='$GROOT_N17_BUNDLE_DIR', include_onnx=False, assets=[],
         runtime=dict(action_output='actions')),

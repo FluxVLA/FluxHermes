@@ -29,6 +29,17 @@ processor, an intermediate representation, and a backend. FluxHermes keeps the
 implementation small and dependency-light while making those boundaries
 explicit.
 
+## Command-line tools
+
+`scripts/compile.py`, `scripts/inspect_bundle.py`, `scripts/doctor.py`,
+`scripts/run_bundle.py`, and `scripts/benchmark.py` directly invoke their
+corresponding modules under `fluxhermes/cli/`. Each module owns its argument
+parser and execution logic and also supports `python -m` execution.
+`fluxhermes/cli/common.py` shares error handling, NPZ I/O, and runtime loading.
+Each tool passes its parser and execution function directly to the shared error
+handler. The compile tool uses `CompilePipeline` for the complete workflow.
+`.vscode/launch.json` starts the corresponding tool modules directly.
+
 ## Core abstractions
 
 ### Codebase

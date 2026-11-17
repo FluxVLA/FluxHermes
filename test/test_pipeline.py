@@ -6,7 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from fluxhermes.cli.main import main
+from fluxhermes.cli.compile import main
 from fluxhermes.config import load_config
 from fluxhermes.pipeline import CompilePipeline
 
@@ -109,7 +109,7 @@ class PipelinePlanTest(unittest.TestCase):
             )
             output = io.StringIO()
             with redirect_stdout(output):
-                code = main(['compile', str(path)])
+                code = main([str(path)])
             self.assertEqual(code, 0)
             self.assertIn('Dry run only', output.getvalue())
 

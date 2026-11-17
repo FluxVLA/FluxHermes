@@ -1,9 +1,10 @@
-"""Opt-in Torch 2.6 legacy symbolic corrections; no model implementation.
+"""Opt-in Torch 2.6/2.8 legacy symbolic corrections; no model implementation.
 
-The scoped registry inspection is tied to Torch 2.6's registration API. Existing
-custom handlers are rejected, never overwritten. The lock serializes Hermes
-exports; callers must not mutate Torch's global registry concurrently outside
-Hermes. Numerical BF16 runtime validation remains a separate backend concern.
+The scoped registry inspection is validated against Torch 2.6 and 2.8's shared
+registration API. Existing custom handlers are rejected, never overwritten. The
+lock serializes Hermes exports; callers must not mutate Torch's global registry
+concurrently outside Hermes. Numerical BF16 runtime validation remains a
+separate backend concern.
 """
 from __future__ import annotations
 
@@ -19,9 +20,10 @@ EXPORT_LOCK = RLock()
 
 @contextmanager
 def normalize_full_slices(torch):
-    """Remove identity Tensor views before Torch 2.6's indexed-write lowering."""
-    if Version(torch.__version__).release[:2] != (2, 6):
-        raise ConfigurationError('Full-slice normalization requires Torch 2.6.')
+    """Remove identity Tensor views before legacy indexed-write lowering."""
+    if Version(torch.__version__).release[:2] not in ((2, 6), (2, 8)):
+        raise ConfigurationError(
+            'Full-slice normalization requires validated Torch 2.6 or 2.8.')
     from torch.onnx import utils
     original = utils._optimize_graph
     if (original.__module__ != 'torch.onnx.utils'
@@ -65,9 +67,11 @@ def normalize_full_slices(torch):
 @contextmanager
 def legacy_bf16_symbolics(torch, opset: int):
     """Use public registration APIs and delegate all operations to Torch."""
-    if Version(torch.__version__).release[:2] != (2, 6) or opset != 18:
+    torch_version = Version(torch.__version__).release[:2]
+    if torch_version not in ((2, 6), (2, 8)) or opset != 18:
         raise ConfigurationError(
-            'legacy_bf16_compat requires the validated Torch 2.6 / opset 18 path.')
+            'legacy_bf16_compat requires the validated Torch 2.6 or 2.8 / '
+            'opset 18 path.')
     from torch.onnx import (_type_utils, symbolic_helper, symbolic_opset11,
                             symbolic_opset13, symbolic_opset14)
     from torch.onnx._internal import registration
