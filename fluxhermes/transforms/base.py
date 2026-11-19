@@ -26,6 +26,12 @@ class BaseTransform:
     def plan(self) -> dict[str, Any]:
         return dict(type=type(self).__name__, name=self.name, description=self.__doc__)
 
+    def run(self, data, function, *args, stage=None, **kwargs):
+        """Expose actual operation arguments/results only for implicit old chains."""
+        if not data['config'].pipeline_explicit:
+            return data['manager'].run(stage or self.name, function, *args, **kwargs)
+        return function(*args, **kwargs)
+
 
 class Compose:
     """Build and execute transforms in exactly the configured order."""
@@ -76,5 +82,9 @@ class Compose:
                     context.pop(key, None)
                 return context
 
-            data = data['manager'].run(transform.name, execute, data)
+            if data['config'].pipeline_explicit:
+                data = data['manager'].run(transform.name, execute, data)
+            else:
+                # The transform records its operations, not the context envelope.
+                data = execute(data)
         return data

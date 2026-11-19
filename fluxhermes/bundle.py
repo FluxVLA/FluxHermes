@@ -38,8 +38,9 @@ def _onnx_external_locations(graph: Path) -> set[Path]:
     try:
         import onnx
     except ImportError as error:
-        raise DependencyError('Bundling or verifying ONNX files requires onnx; '
-                              'install fluxhermes[export].') from error
+        raise DependencyError(
+            'Bundling or verifying ONNX files requires onnx; '
+            'reinstall fluxhermes with its base dependencies.') from error
     from .exporters.onnx import _walk_tensor_protos
 
     try:

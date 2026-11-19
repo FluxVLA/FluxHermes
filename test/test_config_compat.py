@@ -71,6 +71,9 @@ class LegacyConfigTest(unittest.TestCase):
         data['validation']['enabled'] = False
         config = DeploymentConfig.from_dict(data)
         self.assertTrue(config.pipeline[2]['options']['simplify'])
+        # Retain the execution slot so a legacy hook can enable validation later;
+        # plan() still reflects the current switch, and CPU tests assert execution.
+        self.assertIn('ValidateBackend', [step['type'] for step in config.pipeline])
         self.assertNotIn('ValidateBackend',
                          [step['type'] for step in CompilePipeline(config).plan()])
         self.assertEqual(config.pipeline[-1]['type'], 'PackageBundle')

@@ -1,2 +1,5 @@
 numpy>=1.26,<3
 packaging>=23,<26
+# Bundle verification reads ONNX external-data references, including at runtime.
+# Newer ONNX readers can reject the explicitly supported hardlink bundle mode.
+onnx>=1.16,<1.19

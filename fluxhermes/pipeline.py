@@ -44,7 +44,11 @@ class CompilePipeline:
             validation=None)
 
     def plan(self):
-        return self.transforms.plan()
+        stages = self.transforms.plan()
+        if (not self.config.pipeline_explicit
+                and not self.config.validation.get('enabled', True)):
+            stages = [stage for stage in stages if stage['type'] != 'ValidateBackend']
+        return stages
 
     def plan_dict(self):
         config = self.config

@@ -98,6 +98,8 @@ class DeploymentConfig:
     pipeline: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
     pipeline_hooks: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
     config_path: Optional[Path] = None
+    # Generated legacy chains use operation hooks; explicit chains use context hooks.
+    pipeline_explicit: bool = True
 
     @classmethod
     def from_dict(
@@ -166,6 +168,7 @@ class DeploymentConfig:
             pipeline=tuple(pipeline),
             pipeline_hooks=tuple(data.get('pipeline_hooks', ())),
             config_path=config_path,
+            pipeline_explicit='pipeline' in data,
         )
 
     @staticmethod
@@ -195,8 +198,8 @@ class DeploymentConfig:
         if mode == 'int8':
             pipeline.append(dict(type='QuantizeONNX'))
         pipeline.append(dict(type='ConvertBackend'))
-        if bool(data.get('validation', {}).get('enabled', True)):
-            pipeline.append(dict(type='ValidateBackend'))
+        # Old hooks may change validation.enabled before this stage is reached.
+        pipeline.append(dict(type='ValidateBackend'))
         pipeline.append(dict(type='PackageBundle'))
         return pipeline
 
@@ -266,6 +269,10 @@ class DeploymentConfig:
         result['ir_config'] = result.pop('ir')
         result['work_dir'] = str(self.work_dir)
         result['config_path'] = str(self.config_path) if self.config_path else None
+        if not result.pop('pipeline_explicit'):
+            # Keep legacy configs implicit across save/load; emitting their generated
+            # chain would silently opt their existing hooks into the context ABI.
+            result.pop('pipeline')
         return result
 
 

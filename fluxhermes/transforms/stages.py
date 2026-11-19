@@ -26,9 +26,12 @@ def _path(data, value, *, artifact=False):
     path = Path(value).expanduser()
     if not path.is_absolute():
         config = data['config']
-        base = (
-            config.work_dir
-            if artifact or config.config_path is None else config.config_path.parent)
+        if not config.pipeline_explicit and not artifact:
+            base = config.config_path.parent if config.config_path else Path.cwd()
+        else:
+            base = (
+                config.work_dir if artifact or config.config_path is None else
+                config.config_path.parent)
         path = base / path
     return path.resolve()
 
@@ -47,9 +50,14 @@ class PrepareModel(BaseTransform):
         return super().validate(available, config)
 
     def __call__(self, data):
-        processor = build_task_processor(data['config'], data['device'])
+        processor = self.run(
+            data,
+            build_task_processor,
+            data['config'],
+            data['device'],
+            stage='build_task_processor')
         data['task_processor'] = processor
-        data['prepared'] = processor.prepare_model()
+        data['prepared'] = self.run(data, processor.prepare_model)
         return data
 
 
@@ -91,6 +99,9 @@ class GraphTransform(BaseTransform):
 
     def settings(self, data):
         config = data['config']
+        if not config.pipeline_explicit:
+            # Historical before hooks share/mutate the actual config option dict.
+            return config.work_dir / self.default_output, getattr(config, self.section)
         options = {**getattr(config, self.section), **self.options}
         output = _path(data, self.output or self.default_output, artifact=True)
         return output, options
@@ -107,8 +118,9 @@ class ExportONNX(GraphTransform):
 
     def __call__(self, data):
         output, options = self.settings(data)
-        data['graph_path'] = data['output'] = export_onnx(data['prepared'], output,
-                                                          options)
+        data['graph_path'] = data['output'] = self.run(data, export_onnx,
+                                                       data['prepared'], output,
+                                                       options)
         return data
 
 
@@ -155,9 +167,11 @@ class OptimizeONNX(GraphTransform):
 
     def __call__(self, data):
         output, options = self.settings(data)
-        options.setdefault('simplify', True)
-        data['graph_path'] = data['output'] = optimize_onnx(data['graph_path'], output,
-                                                            options)
+        if data['config'].pipeline_explicit:
+            options.setdefault('simplify', True)
+        data['graph_path'] = data['output'] = self.run(data, optimize_onnx,
+                                                       data['graph_path'], output,
+                                                       options)
         return data
 
 
@@ -179,8 +193,10 @@ class LowerPrecision(GraphTransform):
         output, options = self.settings(data)
         if self.output is None:
             output = data['config'].work_dir / f'model.{data["config"].precision}.onnx'
-        data['graph_path'] = data['output'] = lower_onnx_precision(
-            data['graph_path'], output, data['config'].precision, options)
+        data['graph_path'] = data['output'] = self.run(data, lower_onnx_precision,
+                                                       data['graph_path'], output,
+                                                       data['config'].precision,
+                                                       options)
         data['precision_ready'] = True
         return data
 
@@ -202,8 +218,9 @@ class QuantizeONNX(GraphTransform):
 
     def __call__(self, data):
         output, options = self.settings(data)
-        data['graph_path'] = data['output'] = quantize_onnx_qdq(
-            data['graph_path'], output, data['prepared'].calibration_source, options)
+        data['graph_path'] = data['output'] = self.run(
+            data, quantize_onnx_qdq, data['graph_path'], output,
+            data['prepared'].calibration_source, options)
         data['quantized'] = True
         return data
 
@@ -230,7 +247,8 @@ class ConvertBackend(BaseTransform):
     def __call__(self, data):
         config = data['config']
         manager = get_backend_manager(config.backend['type'])
-        result = manager.to_backend([data['graph_path']], config.work_dir, config)
+        result = self.run(data, manager.to_backend, [data['graph_path']],
+                          config.work_dir, config)
         data['backend_result'] = result
         if result.files:
             data['output'] = result.files[0]
@@ -329,10 +347,14 @@ class ValidateBackend(BaseTransform):
 
     def __call__(self, data):
         config, result = data['config'], data['backend_result']
+        if not config.pipeline_explicit and not config.validation.get('enabled', True):
+            data['validation'] = dict(
+                enabled=False, passed=False, reason='validation was disabled')
+            return data
         wrapper = get_backend_manager(config.backend['type']).build_wrapper(
             result.files, device=data['device'], require_target_match=False)
-        data['validation'] = validate_backend(data['prepared'], wrapper,
-                                              config.validation)
+        data['validation'] = self.run(data, validate_backend, data['prepared'], wrapper,
+                                      config.validation)
         data['validation']['enabled'] = True
         return data
 
@@ -369,7 +391,8 @@ class PackageBundle(BaseTransform):
         validation = data.get('validation') or dict(
             enabled=False,
             passed=False,
-            reason='No validation for the current artifacts')
+            reason=('No validation for the current artifacts'
+                    if config.pipeline_explicit else 'validation was disabled'))
         relative_files = [f'backend/{path.name}' for path in result.files]
         manifest = BundleManifest(
             schema_version=2,
@@ -393,6 +416,8 @@ class PackageBundle(BaseTransform):
                 optimization=config.optimization,
                 transforms=config.pipeline,
                 pipeline=data['manager'].report()))
+        if not config.pipeline_explicit:
+            manifest.metadata.pop('transforms')
         files = dict(zip(relative_files, result.files))
         files['build/resolved_config.json'] = config.work_dir / 'resolved_config.json'
         if config.config_path is not None:
@@ -402,7 +427,9 @@ class PackageBundle(BaseTransform):
             files['model/model.onnx'] = graph
         destination = config.package.get('output_dir')
         output = _path(data, destination) if destination else config.work_dir / 'bundle'
+        if not config.pipeline_explicit:
+            output = output.resolve()
         assets = [_path(data, value) for value in config.package.get('assets', ())]
-        data['bundle'] = data['output'] = create_bundle(
-            output, manifest, files, assets=assets)
+        data['bundle'] = data['output'] = self.run(
+            data, create_bundle, output, manifest, files, assets=assets)
         return data

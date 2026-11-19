@@ -18,7 +18,11 @@ def _walk_tensor_protos(message):
         return
     for field, value in message.ListFields():
         if field.type == field.TYPE_MESSAGE:
-            children = value if field.label == field.LABEL_REPEATED else (value, )
+            # Protobuf 7 removed label; older releases lack is_repeated.
+            repeated = getattr(field, 'is_repeated', None)
+            if repeated is None:
+                repeated = field.label == field.LABEL_REPEATED
+            children = value if repeated else (value, )
             for child in children:
                 yield from _walk_tensor_protos(child)
 
