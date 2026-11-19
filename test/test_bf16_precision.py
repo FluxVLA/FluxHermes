@@ -38,6 +38,10 @@ class BF16ConfigTest(unittest.TestCase):
                 'dtype': 'float32',
                 'shape': (2, )
             }],
+            # These tests inspect dtype labels, not an implicit compile chain.
+            'pipeline': [{
+                'type': 'PrepareModel'
+            }],
             'backend_config': {
                 'type': 'tensorrt',
                 **options

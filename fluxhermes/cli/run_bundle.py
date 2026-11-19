@@ -1,4 +1,4 @@
-"""Run one preprocessed NPZ sample and save the named output tensors."""
+"""Run one preprocessed NPZ sample and save outputs (BF16 stored as FP32)."""
 from __future__ import annotations
 
 import argparse

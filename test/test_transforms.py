@@ -163,7 +163,6 @@ class CompositionTest(CompositionFixture):
 
     def test_bad_compositions_fail_before_loading_or_creating_artifacts(self):
         chains = [
-            None,
             [],
             'PrepareModel',
             [{}],

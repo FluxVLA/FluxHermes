@@ -400,11 +400,6 @@ class PackageBundle(BaseTransform):
         if config.package.get('include_onnx', False):
             graph = data['graph_path']
             files['model/model.onnx'] = graph
-            candidates = set(graph.parent.glob(graph.name + '*'))
-            candidates.update(graph.parent.glob(graph.stem + '*.data'))
-            for external in sorted(candidates):
-                if external.is_file() and external != graph:
-                    files[f'model/{external.name}'] = external
         destination = config.package.get('output_dir')
         output = _path(data, destination) if destination else config.work_dir / 'bundle'
         assets = [_path(data, value) for value in config.package.get('assets', ())]

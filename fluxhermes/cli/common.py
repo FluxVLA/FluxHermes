@@ -33,6 +33,7 @@ def load_npz(path: str) -> dict[str, Any]:
 
 
 def save_npz(path: str, outputs: dict[str, Any]) -> None:
+    """Store BF16 tensors losslessly as FP32; preserve all other output dtypes."""
     try:
         import numpy as np
     except Exception as error:
@@ -43,6 +44,11 @@ def save_npz(path: str, outputs: dict[str, Any]) -> None:
             value = value.detach()
         if hasattr(value, 'cpu'):
             value = value.cpu()
+        # NumPy has no native BF16 dtype, and Tensor.numpy() rejects it.
+        # Widen only BF16 (exactly representable in FP32), without requiring
+        # torch for callers that supply ordinary NumPy arrays.
+        if str(getattr(value, 'dtype', None)) == 'torch.bfloat16':
+            value = value.float()
         if hasattr(value, 'numpy'):
             value = value.numpy()
         converted[name] = value

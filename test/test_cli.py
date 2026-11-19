@@ -1,4 +1,6 @@
 """CLI regression tests with real bundles/NPZ and a CPU-only engine fixture."""
+import configparser
+import importlib
 import io
 import json
 import subprocess
@@ -84,6 +86,83 @@ class CLITest(unittest.TestCase):
             encoding='utf-8',
         )
         return path
+
+    def test_legacy_aggregate_console_scripts_are_registered(self):
+        config = configparser.ConfigParser()
+        config.read(ROOT / 'setup.cfg')
+        entries = dict(
+            line.strip().split(' = ', 1)
+            for line in config['options.entry_points']['console_scripts'].splitlines()
+            if line.strip())
+        for name in ('fluxhermes', 'fluxdeploy'):
+            with self.subTest(name=name):
+                self.assertEqual(entries.get(name), 'fluxhermes.cli.main:main')
+
+    def test_legacy_main_forwards_all_subcommand_arguments(self):
+        legacy = importlib.import_module('fluxhermes.cli.main')
+        commands = {
+            'compile': (compile, ['deploy.py', '--execute']),
+            'inspect': (inspect_bundle, ['bundle']),
+            'doctor': (doctor, []),
+            'run': (run_bundle, [
+                'bundle', '--inputs', 'in.npz', '--output', 'out.npz', '--profile', '2',
+                '--device', 'cuda:1', '--allow-unvalidated', '--allow-target-mismatch'
+            ]),
+            'benchmark': (benchmark, [
+                'bundle', '--inputs', 'in.npz', '--warmup', '2', '--repeats', '3',
+                '--profile', '1', '--device', 'cuda:1', '--allow-unvalidated',
+                '--allow-target-mismatch'
+            ]),
+        }
+        for command, (module, args) in commands.items():
+            with self.subTest(command=command), patch.object(
+                    module, 'main', return_value=2) as entry:
+                self.assertEqual(legacy.main([command, *args]), 2)
+                entry.assert_called_once_with(args)
+
+    def test_legacy_main_uses_real_compile_and_bundle_inspection(self):
+        legacy = importlib.import_module('fluxhermes.cli.main')
+        for command, module, args in (('compile', compile, [str(self.config())]),
+                                      ('inspect', inspect_bundle, [str(self.bundle())]),
+                                      ('inspect', inspect_bundle,
+                                       [str(self.root / 'missing')])):
+            with self.subTest(command=command, args=args):
+                self.assertEqual(
+                    self.invoke(legacy.main, [command, *args]),
+                    self.invoke(module.main, args))
+
+    def test_legacy_function_entry_points_preserve_system_exit(self):
+        legacy = importlib.import_module('fluxhermes.cli.main')
+        for command in ('compile', 'inspect', 'run'):
+            with self.subTest(command=command), patch.object(
+                    legacy, 'main',
+                    return_value=2) as entry, patch.object(sys, 'argv',
+                                                           ['tool', 'value']):
+                with self.assertRaises(SystemExit) as error:
+                    getattr(legacy, f'{command}_main')()
+                self.assertEqual(error.exception.code, 2)
+                entry.assert_called_once_with([command, 'value'])
+
+    def test_legacy_module_and_subcommand_help_stay_lightweight(self):
+        for command in ('', 'compile', 'inspect', 'doctor', 'run', 'benchmark'):
+            args = ([command] if command else []) + ['--help']
+            code = ('import runpy, sys\n'
+                    f'sys.path.insert(0, {str(ROOT)!r})\n'
+                    f'sys.argv = ["fluxhermes", *{args!r}]\n'
+                    'try:\n'
+                    '    runpy.run_module("fluxhermes.cli.main", run_name="__main__")\n'
+                    'except SystemExit as error:\n'
+                    '    assert error.code == 0\n'
+                    "assert not {'torch', 'tensorrt', 'onnx', 'numpy', "
+                    "'fluxhermes.pipeline'} & sys.modules.keys()\n")
+            with self.subTest(command=command):
+                result = subprocess.run([sys.executable, '-I', '-B', '-c', code],
+                                        cwd=self.root,
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('usage: fluxhermes', result.stdout)
 
     def test_scripts_run_from_an_uninstalled_checkout_and_another_directory(self):
         for module, prog in TOOLS.items():

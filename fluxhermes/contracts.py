@@ -136,12 +136,21 @@ class DeploymentConfig:
                 raise ConfigurationError('TensorRT bf16 requires strongly_typed=True.')
             if 'allow_tf32' in backend and type(backend['allow_tf32']) is not bool:
                 raise ConfigurationError('TensorRT allow_tf32 must be true or false.')
+        if 'pipeline' not in data:
+            pipeline = cls._legacy_pipeline(data, precision)
         timing_cache = backend.get('timing_cache')
         if timing_cache and config_path is not None:
             timing_path = Path(str(timing_cache)).expanduser()
             if not timing_path.is_absolute():
                 backend['timing_cache'] = str(
                     (config_path.parent / timing_path).resolve())
+        validation = dict(data.get('validation', {}))
+        samples_manifest = validation.get('samples_manifest')
+        if samples_manifest and config_path is not None:
+            samples_path = Path(str(samples_manifest)).expanduser()
+            if not samples_path.is_absolute():
+                samples_path = config_path.parent / samples_path
+            validation['samples_manifest'] = str(samples_path.resolve())
         return cls(
             name=str(data['name']),
             work_dir=work_dir,
@@ -152,12 +161,44 @@ class DeploymentConfig:
             outputs=outputs,
             optimization=dict(data.get('optimization', {})),
             quantization=dict(data.get('quantization', {})),
-            validation=dict(data.get('validation', {})),
+            validation=validation,
             package=dict(data.get('package', {})),
             pipeline=tuple(pipeline),
             pipeline_hooks=tuple(data.get('pipeline_hooks', ())),
             config_path=config_path,
         )
+
+    @staticmethod
+    def _legacy_pipeline(data: Mapping[str, Any],
+                         precision: str) -> list[Dict[str, Any]]:
+        """Translate the original stages only when pipeline is absent."""
+        mode = str(data.get('quantization', {}).get('mode', 'none')).lower()
+        if mode not in {'none', 'int8'}:
+            raise ConfigurationError(f'Unsupported quantization mode: {mode}. '
+                                     'Initial support is none or int8 Q/DQ.')
+        if precision == 'int8' and mode != 'int8':
+            raise ConfigurationError(
+                'Backend precision=int8 requires quantization.mode=int8.')
+        if mode == 'int8' and precision != 'int8':
+            raise ConfigurationError(
+                'INT8 Q/DQ quantization requires backend precision=int8.')
+        pipeline = [
+            dict(type='PrepareModel'),
+            dict(type='Rewrite', transforms=[dict(type='ExportONNX')]),
+            dict(
+                type='OptimizeONNX',
+                options=dict(
+                    simplify=bool(data.get('optimization', {}).get('simplify',
+                                                                   False)))),
+            dict(type='LowerPrecision'),
+        ]
+        if mode == 'int8':
+            pipeline.append(dict(type='QuantizeONNX'))
+        pipeline.append(dict(type='ConvertBackend'))
+        if bool(data.get('validation', {}).get('enabled', True)):
+            pipeline.append(dict(type='ValidateBackend'))
+        pipeline.append(dict(type='PackageBundle'))
+        return pipeline
 
     @staticmethod
     def _normalize_codebase(data: Mapping[str, Any]) -> Dict[str, Any]:
