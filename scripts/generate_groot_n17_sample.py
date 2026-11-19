@@ -19,7 +19,9 @@ _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if sys.path and str(Path(sys.path[0]).resolve()) == _SCRIPT_DIR:
     sys.path.pop(0)
 
-import numpy as np
+# isort: off
+import numpy as np  # noqa: E402
+# isort: on
 
 
 def _gradient_images(size: int = 256) -> tuple[np.ndarray, np.ndarray]:
@@ -42,13 +44,12 @@ def generate(output: Path, fluxvla_root: Path, config_path: Path) -> Path:
     # paths, so construct the original preprocessing pipeline from its root.
     os.chdir(fluxvla_root)
     import torch
+    from fluxvla.engines import build_dataset_from_cfg
+    from fluxvla.models.backbones.vlms.groot_n17_qwen3_backbone import \
+        GrootN17Qwen3Backbone
+    from fluxvla.models.compat.qwen3vl_457_compat import _get_rope_index_457
     from mmengine import Config
     from mmengine.config import ConfigDict
-    from fluxvla.engines import build_dataset_from_cfg
-    from fluxvla.models.backbones.vlms.groot_n17_qwen3_backbone import (
-        GrootN17Qwen3Backbone,
-    )
-    from fluxvla.models.compat.qwen3vl_457_compat import _get_rope_index_457
 
     cfg = Config.fromfile(str(config_path))
     dataset_cfg = copy.deepcopy(cfg.eval.dataset)

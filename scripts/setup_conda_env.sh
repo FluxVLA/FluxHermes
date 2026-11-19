@@ -19,13 +19,41 @@ export TMPDIR="${TMP_ROOT}"
   --constraint "${PROJECT_ROOT}/requirements-conda.txt" \
   -e "${PROJECT_ROOT}[export,quantization,dev]"
 
-# Keep the large TensorRT libraries on the shared data disk instead of the
-# small container root filesystem, then expose them to the conda interpreter.
-"${PYTHON}" -m pip install --no-cache-dir --upgrade \
-  --constraint "${PROJECT_ROOT}/requirements-conda.txt" \
-  --target "${TRT_TARGET}" tensorrt-cu12
-printf '%s\n' "${TRT_TARGET}" > "${SITE_PACKAGES}/fluxhermes_tensorrt.pth"
+# Reinstall the numerical ABI set together. This prevents stale NumPy 2.x
+# extension files from being mixed with the pinned NumPy 1.26 runtime.
+"${PYTHON}" -m pip install --no-cache-dir --force-reinstall \
+  'numpy==1.26.4' \
+  'scipy==1.15.3' \
+  'protobuf==5.29.6' \
+  'ml-dtypes==0.2.0'
 
+# Keep the large TensorRT libraries on the shared data disk instead of the
+# small container root filesystem. Skip the download when the exact target is
+# already healthy.
+if ! PYTHONPATH="${TRT_TARGET}" "${PYTHON}" -c \
+  'import tensorrt; assert tensorrt.__version__ == "11.4.0.106"' \
+  >/dev/null 2>&1; then
+  "${PYTHON}" -m pip install --no-cache-dir --upgrade \
+    --constraint "${PROJECT_ROOT}/requirements-conda.txt" \
+    --target "${TRT_TARGET}" tensorrt-cu12
+fi
+
+# A plain path line is appended after site-packages and can leave an older
+# TensorRT binding active. Insert the isolated target at the front instead.
+printf '%s\n' \
+  "import sys; sys.path.insert(0, r'${TRT_TARGET}')" \
+  > "${SITE_PACKAGES}/fluxhermes_tensorrt.pth"
+
+"${PYTHON}" - <<'PY'
+import numpy
+import scipy
+import tensorrt
+
+assert numpy.__version__ == '1.26.4', numpy.__version__
+assert scipy.__version__ == '1.15.3', scipy.__version__
+assert tensorrt.__version__ == '11.4.0.106', tensorrt.__version__
+PY
+"${PYTHON}" -m pip check
 "${PYTHON}" -m fluxhermes.cli.doctor
 
 cat <<MSG

@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from fluxhermes.bundle import create_bundle, verify_bundle
 from fluxhermes.contracts import BundleManifest, TensorSpec
@@ -44,6 +45,38 @@ class BundleTest(unittest.TestCase):
             (bundle / 'backend/model.plan').write_bytes(b'changed')
             with self.assertRaises(ArtifactError):
                 verify_bundle(bundle)
+
+    def test_hardlinks_backend_file_when_requested(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine = root / 'source.plan'
+            engine.write_bytes(b'engine')
+            with patch.dict(
+                    'os.environ',
+                    {'FLUXHERMES_BUNDLE_FILE_MODE': 'hardlink'}):
+                bundle = create_bundle(
+                    root / 'bundle',
+                    manifest(),
+                    {'backend/model.plan': engine},
+                )
+            target = bundle / 'backend/model.plan'
+            self.assertEqual(engine.stat().st_ino, target.stat().st_ino)
+            verify_bundle(bundle)
+
+    def test_rejects_unknown_bundle_file_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine = root / 'source.plan'
+            engine.write_bytes(b'engine')
+            with patch.dict(
+                    'os.environ',
+                    {'FLUXHERMES_BUNDLE_FILE_MODE': 'invalid'}):
+                with self.assertRaisesRegex(ArtifactError, 'expected'):
+                    create_bundle(
+                        root / 'bundle',
+                        manifest(),
+                        {'backend/model.plan': engine},
+                    )
 
     def test_copies_asset_directory(self):
         with tempfile.TemporaryDirectory() as directory:

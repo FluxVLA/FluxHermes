@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, Iterable
@@ -10,6 +11,26 @@ from .errors import ArtifactError
 from .utils import read_json, sha256_file, write_json
 
 MANIFEST_NAME = 'manifest.json'
+BUNDLE_FILE_MODE_ENV = 'FLUXHERMES_BUNDLE_FILE_MODE'
+
+
+def _stage_file(source: Path, target: Path) -> None:
+    mode = os.getenv(BUNDLE_FILE_MODE_ENV, 'copy')
+    if mode == 'copy':
+        shutil.copy2(source, target)
+        return
+    if mode == 'hardlink':
+        try:
+            target.hardlink_to(source)
+        except OSError as error:
+            raise ArtifactError(
+                f'Unable to hardlink bundle file {source} to {target}: {error}'
+            ) from error
+        shutil.copystat(source, target)
+        return
+    raise ArtifactError(
+        f'Unsupported {BUNDLE_FILE_MODE_ENV} value: {mode!r}; '
+        "expected 'copy' or 'hardlink'")
 
 
 def load_manifest(bundle_dir: str | Path) -> BundleManifest:
@@ -70,7 +91,7 @@ def create_bundle(
             raise ArtifactError(f'Bundle source file is missing: {source}')
         target = staging / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        _stage_file(source, target)
         checksums[relative_path.as_posix()] = sha256_file(target)
     for raw_asset in assets:
         source = Path(raw_asset).expanduser().resolve()
