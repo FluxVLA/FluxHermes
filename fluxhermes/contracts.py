@@ -42,8 +42,8 @@ class TensorSpec:
         if not self.dtype:
             raise ConfigurationError(f'{self.name}: dtype cannot be empty.')
         profiles = (self.min_shape, self.opt_shape, self.max_shape)
-        if any(item is not None for item in profiles) and not all(
-                item is not None for item in profiles):
+        if any(item is not None for item in profiles) and not all(item is not None
+                                                                  for item in profiles):
             raise ConfigurationError(
                 f'{self.name}: min/opt/max shapes must be provided together.')
         if all(item is not None for item in profiles):
@@ -54,8 +54,8 @@ class TensorSpec:
             assert self.min_shape is not None
             assert self.opt_shape is not None
             assert self.max_shape is not None
-            for minimum, optimum, maximum in zip(
-                    self.min_shape, self.opt_shape, self.max_shape):
+            for minimum, optimum, maximum in zip(self.min_shape, self.opt_shape,
+                                                 self.max_shape):
                 if not minimum <= optimum <= maximum:
                     raise ConfigurationError(
                         f'{self.name}: expected min <= opt <= max, got '
@@ -95,8 +95,11 @@ class DeploymentConfig:
     quantization: Dict[str, Any] = field(default_factory=dict)
     validation: Dict[str, Any] = field(default_factory=dict)
     package: Dict[str, Any] = field(default_factory=dict)
+    pipeline: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
     pipeline_hooks: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
     config_path: Optional[Path] = None
+    # Generated legacy chains use operation hooks; explicit chains use context hooks.
+    pipeline_explicit: bool = True
 
     @classmethod
     def from_dict(
@@ -109,6 +112,10 @@ class DeploymentConfig:
         if missing:
             raise ConfigurationError(
                 f'Missing deployment configuration keys: {", ".join(missing)}')
+        pipeline = data.get('pipeline', ())
+        if not isinstance(pipeline, (list, tuple)):
+            raise ConfigurationError(
+                'deployment.pipeline must be a list of transforms.')
         inputs = tuple(TensorSpec.from_dict(item) for item in data['inputs'])
         outputs = tuple(TensorSpec.from_dict(item) for item in data['outputs'])
         if not inputs or not outputs:
@@ -124,15 +131,28 @@ class DeploymentConfig:
         ir = cls._normalize_ir(data)
         default_precision = 'fp16' if backend.get('type') == 'tensorrt' else 'fp32'
         precision = str(backend.get('precision', default_precision))
-        if backend.get('type') == 'tensorrt' and precision not in {
-                'fp32', 'fp16', 'int8'}:
-            raise ConfigurationError(f'Unsupported TensorRT precision: {precision}')
+        if backend.get('type') == 'tensorrt':
+            if precision not in {'fp32', 'fp16', 'bf16', 'int8'}:
+                raise ConfigurationError(f'Unsupported TensorRT precision: {precision}')
+            if precision == 'bf16' and backend.get('strongly_typed') is False:
+                raise ConfigurationError('TensorRT bf16 requires strongly_typed=True.')
+            if 'allow_tf32' in backend and type(backend['allow_tf32']) is not bool:
+                raise ConfigurationError('TensorRT allow_tf32 must be true or false.')
+        if 'pipeline' not in data:
+            pipeline = cls._legacy_pipeline(data, precision)
         timing_cache = backend.get('timing_cache')
         if timing_cache and config_path is not None:
             timing_path = Path(str(timing_cache)).expanduser()
             if not timing_path.is_absolute():
                 backend['timing_cache'] = str(
                     (config_path.parent / timing_path).resolve())
+        validation = dict(data.get('validation', {}))
+        samples_manifest = validation.get('samples_manifest')
+        if samples_manifest and config_path is not None:
+            samples_path = Path(str(samples_manifest)).expanduser()
+            if not samples_path.is_absolute():
+                samples_path = config_path.parent / samples_path
+            validation['samples_manifest'] = str(samples_path.resolve())
         return cls(
             name=str(data['name']),
             work_dir=work_dir,
@@ -143,11 +163,45 @@ class DeploymentConfig:
             outputs=outputs,
             optimization=dict(data.get('optimization', {})),
             quantization=dict(data.get('quantization', {})),
-            validation=dict(data.get('validation', {})),
+            validation=validation,
             package=dict(data.get('package', {})),
+            pipeline=tuple(pipeline),
             pipeline_hooks=tuple(data.get('pipeline_hooks', ())),
             config_path=config_path,
+            pipeline_explicit='pipeline' in data,
         )
+
+    @staticmethod
+    def _legacy_pipeline(data: Mapping[str, Any],
+                         precision: str) -> list[Dict[str, Any]]:
+        """Translate the original stages only when pipeline is absent."""
+        mode = str(data.get('quantization', {}).get('mode', 'none')).lower()
+        if mode not in {'none', 'int8'}:
+            raise ConfigurationError(f'Unsupported quantization mode: {mode}. '
+                                     'Initial support is none or int8 Q/DQ.')
+        if precision == 'int8' and mode != 'int8':
+            raise ConfigurationError(
+                'Backend precision=int8 requires quantization.mode=int8.')
+        if mode == 'int8' and precision != 'int8':
+            raise ConfigurationError(
+                'INT8 Q/DQ quantization requires backend precision=int8.')
+        pipeline = [
+            dict(type='PrepareModel'),
+            dict(type='Rewrite', transforms=[dict(type='ExportONNX')]),
+            dict(
+                type='OptimizeONNX',
+                options=dict(
+                    simplify=bool(data.get('optimization', {}).get('simplify',
+                                                                   False)))),
+            dict(type='LowerPrecision'),
+        ]
+        if mode == 'int8':
+            pipeline.append(dict(type='QuantizeONNX'))
+        pipeline.append(dict(type='ConvertBackend'))
+        # Old hooks may change validation.enabled before this stage is reached.
+        pipeline.append(dict(type='ValidateBackend'))
+        pipeline.append(dict(type='PackageBundle'))
+        return pipeline
 
     @staticmethod
     def _normalize_codebase(data: Mapping[str, Any]) -> Dict[str, Any]:
@@ -158,13 +212,13 @@ class DeploymentConfig:
             source_type = str(source.get('type', ''))
             codebase = {
                 'type': source_type,
-                'task': (
-                    'predict_action' if source_type == 'fluxvla' else 'custom'),
+                'task': ('predict_action' if source_type == 'fluxvla' else 'custom'),
                 'source': source,
             }
         else:
-            raise ConfigurationError(
-                'Deployment config requires codebase_config or legacy source.')
+            return {}
+        if not codebase:
+            return {}
         if not codebase.get('type') or not codebase.get('task'):
             raise ConfigurationError(
                 'codebase_config requires non-empty type and task.')
@@ -192,7 +246,7 @@ class DeploymentConfig:
 
     @property
     def source(self) -> Dict[str, Any]:
-        return self.codebase['source']
+        return self.codebase.get('source', {})
 
     @property
     def export(self) -> Dict[str, Any]:
@@ -215,6 +269,10 @@ class DeploymentConfig:
         result['ir_config'] = result.pop('ir')
         result['work_dir'] = str(self.work_dir)
         result['config_path'] = str(self.config_path) if self.config_path else None
+        if not result.pop('pipeline_explicit'):
+            # Keep legacy configs implicit across save/load; emitting their generated
+            # chain would silently opt their existing hooks into the context ABI.
+            result.pop('pipeline')
         return result
 
 

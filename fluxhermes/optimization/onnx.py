@@ -66,9 +66,9 @@ def lower_onnx_precision(
     precision: str,
     options: Dict[str, Any],
 ) -> Path:
-    """Make reduced precision explicit for TensorRT strongly typed builds."""
+    """Lower FP16 explicitly; BF16 preserves the source graph's mixed dtypes."""
     source = Path(input_path).expanduser().resolve()
-    if precision in {'fp32', 'int8'}:
+    if precision in {'fp32', 'bf16', 'int8'}:
         return source
     if precision != 'fp16':
         raise ValueError(f'Unsupported explicit graph precision: {precision}')

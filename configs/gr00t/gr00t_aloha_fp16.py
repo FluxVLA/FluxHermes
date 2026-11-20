@@ -8,6 +8,14 @@ with ``PreparedModel``; see docs/model_adapter.md.
 deployment = dict(
     name='gr00t-aloha-fp16',
     work_dir='../../work_dirs/gr00t-aloha-fp16',
+    pipeline=[
+        dict(type='PrepareModel'),
+        dict(type='Rewrite', transforms=[dict(type='ExportONNX')]),
+        dict(type='LowerPrecision'),
+        dict(type='ConvertBackend'),
+        dict(type='ValidateBackend'),
+        dict(type='PackageBundle'),
+    ],
     codebase_config=dict(
         type='python',
         task='custom',
@@ -84,11 +92,9 @@ deployment = dict(
         external_data=True,
     ),
     optimization=dict(
-        simplify=False,
         fp16_conversion=True,
         keep_io_types=True,
     ),
-    quantization=dict(mode='none'),
     backend_config=dict(
         type='tensorrt',
         precision='fp16',
@@ -98,7 +104,6 @@ deployment = dict(
         log_level='warning',
     ),
     validation=dict(
-        enabled=True,
         atol=2e-2,
         rtol=2e-2,
         min_cosine_similarity=0.995,
